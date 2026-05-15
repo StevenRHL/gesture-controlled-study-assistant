@@ -34,6 +34,6 @@ To reduce accidental inputs, the system uses a confirmation step before starting
 Clone the repository:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/vsc-hand-study-assistant.git
+git clone https://github.com/StevenRHL/vsc-hand-study-assistant.git
 cd vsc-hand-study-assistant
 ```
