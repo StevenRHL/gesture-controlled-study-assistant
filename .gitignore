@@ -16,4 +16,5 @@ env/
 .vscode/
 
 # Logs
-*.log
+*.logexternal/GazeTracking/
+external/GazeTracking/
