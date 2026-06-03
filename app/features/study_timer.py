@@ -2,8 +2,8 @@ import time
 
 
 class StudyTimer:
-    def __init__(self, study_minutes=0.2):
-        self.study_seconds = study_minutes * 60
+    def __init__(self, study_minutes=25):
+        self.study_seconds = int(study_minutes * 60)
         self.remaining_seconds = self.study_seconds
 
         self.is_running = False
@@ -50,6 +50,12 @@ class StudyTimer:
         self.paused_at = None
         print("Timer reset.")
 
+    def set_duration_minutes(self, study_minutes):
+        duration_minutes = max(1, int(study_minutes))
+        self.study_seconds = duration_minutes * 60
+        self.reset()
+        print(f"Timer duration set to {duration_minutes} minutes.")
+
     def update(self):
         if self.is_running:
             elapsed = time.time() - self.start_time
@@ -85,3 +91,6 @@ class StudyTimer:
             return "paused"
 
         return "ready"
+
+    def get_duration_minutes(self):
+        return int(self.study_seconds // 60)

@@ -2,3 +2,5 @@ session_id,task_name,date,start_time,end_time,duration_minutes,status,pauses
 1,Study Session,2026-05-15,15:56:31,15:56:39,0.14,stopped,0
 2,Study Session,2026-05-15,16:00:37,16:00:40,0.06,stopped,0
 3,Study Session,2026-05-26,00:18:04,00:18:07,0.05,stopped,0
+4,Study Session,2026-06-03,14:15:39,14:15:49,0.17,stopped,0
+5,Study Session,2026-06-03,15:32:44,15:32:46,0.02,stopped,0
