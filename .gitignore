@@ -16,8 +16,9 @@ env/
 .vscode/
 
 # Logs
-*.logexternal/GazeTracking/
+*.log
 external/GazeTracking/
 
-# Text
+# Local notes and agent instructions
+AGENTS.md
 notes.txt
