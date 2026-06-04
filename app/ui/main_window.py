@@ -22,6 +22,7 @@ from app.ui.activity_detail_window import ActivityDetailView
 from app.ui.assistive_touch_cursor import AssistiveTouchCursor
 from app.ui.pomodoro_detail_window import PomodoroDetailView
 from app.ui.sessions_window import SessionsWindow
+from app.ui.study_progress_detail_window import StudyProgressDetailView
 
 pyautogui.FAILSAFE = False
 DEBUG_HITBOX_CLICKS = True
@@ -85,6 +86,7 @@ class MainWindow:
         self.last_metrics_refresh = 0
         self.pomodoro_detail_view = None
         self.activity_detail_view = None
+        self.study_progress_detail_view = None
         self.pending_activity_task_selection = None
         self.update_after_id = None
 
@@ -273,6 +275,13 @@ class MainWindow:
             "open_activity_detail",
         )
 
+    def _bind_study_progress_detail_trigger(self, widget):
+        self._register_detail_trigger(
+            widget,
+            self.open_study_progress_detail,
+            "open_study_progress_detail",
+        )
+
     def _register_detail_trigger(self, widget, callback, action_name):
         if widget.winfo_class() not in INTERACTIVE_WIDGET_CLASSES:
             self._set_hitbox_action(widget, callback, action_name)
@@ -355,7 +364,11 @@ class MainWindow:
         return left <= screen_x <= right and top <= screen_y <= bottom
 
     def _get_active_detail_view(self):
-        for view in (self.pomodoro_detail_view, self.activity_detail_view):
+        for view in (
+            self.pomodoro_detail_view,
+            self.activity_detail_view,
+            self.study_progress_detail_view,
+        ):
             try:
                 if view is not None and view.winfo_exists() and view.winfo_ismapped():
                     return view
@@ -625,34 +638,34 @@ class MainWindow:
         )
 
         goal_layout = tk.Frame(self.goals_body, bg=self.colors["card"])
-        goal_layout.pack(fill="both", expand=True)
+        goal_layout.pack(fill="both", expand=True, pady=(2, 0))
 
         self.goal_canvas = tk.Canvas(
             goal_layout,
-            width=180,
-            height=180,
+            width=156,
+            height=156,
             bg=self.colors["card"],
             highlightthickness=0
         )
-        self.goal_canvas.pack(side="left", padx=(0, 18), pady=4)
+        self.goal_canvas.pack(side="left", padx=(0, 16), pady=(2, 0))
         self.goal_canvas.create_oval(
-            24,
-            24,
-            156,
-            156,
+            20,
+            20,
+            136,
+            136,
             outline=self.colors["teal_soft"],
-            width=12
+            width=10
         )
         self.goal_arc = self.goal_canvas.create_arc(
-            24,
-            24,
-            156,
-            156,
+            20,
+            20,
+            136,
+            136,
             start=90,
             extent=0,
             style="arc",
             outline=self.colors["teal"],
-            width=12
+            width=10
         )
 
         goal_info = tk.Frame(goal_layout, bg=self.colors["card"])
@@ -669,15 +682,15 @@ class MainWindow:
         self.goal_target_label = tk.Label(
             goal_info,
             text="25h 00m",
-            font=("Arial", 24, "bold"),
+            font=("Arial", 20, "bold"),
             bg=self.colors["card"],
             fg=self.colors["text"]
         )
-        self.goal_target_label.pack(anchor="w", pady=(4, 16))
+        self.goal_target_label.pack(anchor="w", pady=(4, 12))
 
         self.goal_progress_track = tk.Canvas(
             goal_info,
-            width=280,
+            width=240,
             height=12,
             bg=self.colors["card"],
             highlightthickness=0
@@ -686,7 +699,7 @@ class MainWindow:
         self.goal_progress_track.create_rectangle(
             0,
             2,
-            280,
+            240,
             10,
             fill="#1D252D",
             outline=""
@@ -703,20 +716,24 @@ class MainWindow:
         self.goal_studied_label = tk.Label(
             goal_info,
             text="Time Studied: 0h 00m",
-            font=("Arial", 12),
+            font=("Arial", 11),
             bg=self.colors["card"],
             fg=self.colors["text"]
         )
-        self.goal_studied_label.pack(anchor="w", pady=(16, 6))
+        self.goal_studied_label.pack(anchor="w", pady=(12, 4))
 
         self.goal_message_label = tk.Label(
             goal_info,
             text="Keep going.",
-            font=("Arial", 11),
+            font=("Arial", 10),
             bg=self.colors["card"],
-            fg=self.colors["accent_bright"]
+            fg=self.colors["accent_bright"],
+            wraplength=240,
+            justify="left"
         )
         self.goal_message_label.pack(anchor="w")
+        self.goals_card = self.goals_body.master
+        self._bind_study_progress_detail_trigger(self.goals_card)
 
     def _build_calendar_card(self):
         self.calendar_body = self._create_card(
@@ -1319,7 +1336,11 @@ class MainWindow:
     def _show_detail_view(self, active_view):
         self.main_container.pack_forget()
 
-        for view in (self.pomodoro_detail_view, self.activity_detail_view):
+        for view in (
+            self.pomodoro_detail_view,
+            self.activity_detail_view,
+            self.study_progress_detail_view,
+        ):
             if view is not None and view is not active_view:
                 view.pack_forget()
 
@@ -1380,6 +1401,29 @@ class MainWindow:
     def close_activity_detail(self):
         if self.activity_detail_view is not None:
             self.activity_detail_view.pack_forget()
+        self.detail_container.pack_forget()
+        self.main_container.pack(fill="both", expand=True, padx=24, pady=24)
+        self._refresh_dashboard_metrics(force=True)
+
+    def open_study_progress_detail(self):
+        callbacks = {
+            "back": self.close_study_progress_detail,
+        }
+
+        if self.study_progress_detail_view is None:
+            self.study_progress_detail_view = StudyProgressDetailView(
+                self.detail_container,
+                self.colors,
+                callbacks,
+            )
+            self._register_virtual_button_targets(self.study_progress_detail_view)
+
+        self._show_detail_view(self.study_progress_detail_view)
+        self._sync_study_progress_detail_window()
+
+    def close_study_progress_detail(self):
+        if self.study_progress_detail_view is not None:
+            self.study_progress_detail_view.pack_forget()
         self.detail_container.pack_forget()
         self.main_container.pack(fill="both", expand=True, padx=24, pady=24)
         self._refresh_dashboard_metrics(force=True)
@@ -1486,6 +1530,15 @@ class MainWindow:
             self.activity_detail_view.select_task(self.pending_activity_task_selection)
             self.pending_activity_task_selection = None
 
+    def _sync_study_progress_detail_window(self):
+        if self.study_progress_detail_view is None:
+            return
+
+        self.study_progress_detail_view.update_state(
+            self._calculate_metrics(),
+            self._format_minutes,
+        )
+
     def _sync_pomodoro_detail_window(self):
         if self.pomodoro_detail_view is None:
             return
@@ -1582,6 +1635,15 @@ class MainWindow:
                         f"card=activity screen=({screen_x},{screen_y})"
                     )
                 self.open_activity_detail()
+                return
+
+            if self._point_in_widget(self.goals_card, screen_x, screen_y):
+                if DEBUG_HITBOX_CLICKS:
+                    print(
+                        f"[virtual-hitbox] action=open_study_progress_detail "
+                        f"card=goals screen=({screen_x},{screen_y})"
+                    )
+                self.open_study_progress_detail()
                 return
 
         active_detail_view = self._get_active_detail_view()
@@ -1724,28 +1786,29 @@ class MainWindow:
         self.goal_canvas.itemconfig(self.goal_arc, extent=-goal_ratio * 360)
         self.goal_canvas.delete("goal_text")
         self.goal_canvas.create_text(
-            90,
-            82,
+            78,
+            68,
             text=f"{int(goal_ratio * 100)}%",
             tags="goal_text",
             fill=self.colors["accent_bright"],
-            font=("Arial", 24, "bold")
+            font=("Arial", 20, "bold")
         )
         self.goal_canvas.create_text(
-            90,
-            108,
+            78,
+            92,
             text="WEEKLY GOAL",
             tags="goal_text",
             fill=self.colors["muted"],
-            font=("Arial", 10)
+            font=("Arial", 9, "bold")
         )
         self.goal_progress_track.coords(
             self.goal_progress_fill,
             0,
             2,
-            int(280 * goal_ratio),
+            int(240 * goal_ratio),
             10
         )
+        self._sync_study_progress_detail_window()
 
     def _calculate_metrics(self):
         sessions = self.session_logger.read_sessions()
@@ -1756,6 +1819,7 @@ class MainWindow:
         minutes_by_day = {day: 0.0 for day in dates_in_range}
         sessions_by_day = {day: 0 for day in dates_in_range}
         session_dates = []
+        ordered_sessions = []
 
         for session in sessions:
             raw_date = session.get("date", "")
@@ -1765,6 +1829,7 @@ class MainWindow:
                 continue
 
             session_dates.append(session_date)
+            ordered_sessions.append((self._parse_session_datetime(session), session))
             try:
                 duration = float(session.get("duration_minutes", 0) or 0)
             except ValueError:
@@ -1782,6 +1847,7 @@ class MainWindow:
 
         current_streak = self._compute_current_streak(set(session_dates), today)
         best_streak = self._compute_best_streak(set(session_dates))
+        days_with_sessions = sum(1 for count in sessions_by_day.values() if count > 0)
 
         if goal_ratio >= 1:
             goal_message = "Weekly goal reached."
@@ -1799,6 +1865,22 @@ class MainWindow:
         else:
             streak_message = f"{current_streak} straight study days."
 
+        recent_sessions = []
+        for _, session in sorted(
+            ordered_sessions,
+            key=lambda item: item[0] or datetime.min,
+            reverse=True,
+        )[:8]:
+            recent_sessions.append(
+                {
+                    "date": session.get("date", ""),
+                    "task_name": session.get("task_name", "Study Session"),
+                    "duration_minutes": session.get("duration_minutes", "0"),
+                    "status": session.get("status", "ready"),
+                    "pauses": session.get("pauses", "0"),
+                }
+            )
+
         return {
             "weekly_minutes": weekly_minutes,
             "weekly_sessions": weekly_sessions,
@@ -1808,6 +1890,12 @@ class MainWindow:
             "best_streak": best_streak,
             "goal_message": goal_message,
             "streak_message": streak_message,
+            "day_labels": [day.strftime("%a") for day in dates_in_range],
+            "day_minutes": [minutes_by_day[day] for day in dates_in_range],
+            "day_sessions": [sessions_by_day[day] for day in dates_in_range],
+            "days_with_sessions": days_with_sessions,
+            "recent_sessions": recent_sessions,
+            "total_sessions": len(sessions),
         }
 
     def _calculate_task_metrics(self):
@@ -1922,6 +2010,15 @@ class MainWindow:
             return datetime.strptime(
                 f"{task.get('due_date', '')} {task.get('due_time', '')}",
                 "%Y-%m-%d %H:%M",
+            )
+        except ValueError:
+            return None
+
+    def _parse_session_datetime(self, session):
+        try:
+            return datetime.strptime(
+                f"{session.get('date', '')} {session.get('start_time', '00:00:00')}",
+                "%Y-%m-%d %H:%M:%S",
             )
         except ValueError:
             return None
