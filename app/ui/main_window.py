@@ -16,9 +16,6 @@ from app.core.virtual_mouse import VirtualMouse
 
 from app.features.study_timer import StudyTimer
 from app.features.session_logger import SessionLogger
-from app.features.task_manager import TaskManager
-
-from app.ui.activity_detail_window import ActivityDetailView
 from app.ui.assistive_touch_cursor import AssistiveTouchCursor
 from app.ui.pomodoro_detail_window import PomodoroDetailView
 from app.ui.sessions_window import SessionsWindow
@@ -68,8 +65,6 @@ class MainWindow:
             value=str(self.study_timer.get_duration_minutes())
         )
         self.session_logger = SessionLogger()
-        self.task_manager = TaskManager()
-
         self.previous_requested_action = None
         self.previous_left_gesture = None
         self.previous_right_gesture = None
@@ -85,9 +80,7 @@ class MainWindow:
         self.virtual_mouse = None
         self.last_metrics_refresh = 0
         self.pomodoro_detail_view = None
-        self.activity_detail_view = None
         self.study_progress_detail_view = None
-        self.pending_activity_task_selection = None
         self.update_after_id = None
 
         self._build_ui()
@@ -125,7 +118,6 @@ class MainWindow:
 
         self._build_sidebar()
         self._build_timer_card()
-        self._build_activity_card()
         self._build_goals_card()
         self._build_calendar_card()
         self._build_streak_card()
@@ -224,7 +216,7 @@ class MainWindow:
             "POMODORO TIMER",
             row=0,
             column=0,
-            columnspan=2
+            columnspan=3
         )
 
         header_row = tk.Frame(self.timer_body, bg=self.colors["card"])
@@ -266,13 +258,6 @@ class MainWindow:
             widget,
             self.open_pomodoro_detail,
             "open_pomodoro_detail",
-        )
-
-    def _bind_activity_detail_trigger(self, widget):
-        self._register_detail_trigger(
-            widget,
-            self.open_activity_detail,
-            "open_activity_detail",
         )
 
     def _bind_study_progress_detail_trigger(self, widget):
@@ -366,7 +351,6 @@ class MainWindow:
     def _get_active_detail_view(self):
         for view in (
             self.pomodoro_detail_view,
-            self.activity_detail_view,
             self.study_progress_detail_view,
         ):
             try:
@@ -544,91 +528,6 @@ class MainWindow:
             justify="left"
         )
         self.timer_control_note.pack(anchor="w", pady=(10, 0))
-
-    def _build_activity_card(self):
-        self.activity_body = self._create_card(
-            "ACTIVITY MONITOR",
-            row=0,
-            column=2
-        )
-
-        stats_row = tk.Frame(self.activity_body, bg=self.colors["card"])
-        stats_row.pack(fill="x", pady=(0, 14))
-
-        self.pending_tasks_value = self._build_stat_block(
-            stats_row,
-            "Pending",
-            "0",
-            self.colors["teal"]
-        )
-        self.completed_tasks_value = self._build_stat_block(
-            stats_row,
-            "Tasks Completed",
-            "0",
-            self.colors["accent"]
-        )
-        self.due_today_value = self._build_stat_block(
-            stats_row,
-            "Due Today",
-            "0",
-            self.colors["success"]
-        )
-
-        self.activity_summary_label = tk.Label(
-            self.activity_body,
-            text="Open the activity monitor to manage tasks and due dates.",
-            font=("Arial", 10),
-            bg=self.colors["card"],
-            fg=self.colors["muted"],
-            anchor="w",
-            justify="left",
-        )
-        self.activity_summary_label.pack(fill="x", pady=(0, 10))
-
-        self.activity_preview_frame = tk.Frame(
-            self.activity_body,
-            bg=self.colors["card_alt"],
-            highlightbackground=self.colors["border"],
-            highlightthickness=1,
-            padx=12,
-            pady=12,
-        )
-        self.activity_preview_frame.pack(fill="x", pady=(0, 10))
-
-        self.activity_preview_title = tk.Label(
-            self.activity_preview_frame,
-            text="Upcoming Tasks",
-            font=("Arial", 11, "bold"),
-            bg=self.colors["card_alt"],
-            fg=self.colors["accent_bright"],
-            anchor="w",
-        )
-        self.activity_preview_title.pack(fill="x", pady=(0, 8))
-
-        self.activity_preview_labels = []
-        for _ in range(3):
-            label = tk.Label(
-                self.activity_preview_frame,
-                text="",
-                font=("Arial", 10),
-                bg=self.colors["card_alt"],
-                fg=self.colors["text"],
-                anchor="w",
-                justify="left",
-            )
-            label.pack(fill="x", pady=2)
-            self.activity_preview_labels.append(label)
-
-        self.chart_canvas = tk.Canvas(
-            self.activity_body,
-            height=170,
-            bg=self.colors["card_alt"],
-            highlightbackground=self.colors["border"],
-            highlightthickness=1
-        )
-        self.chart_canvas.pack(fill="both", expand=True, pady=(4, 0))
-        self.activity_card = self.activity_body.master
-        self._bind_activity_detail_trigger(self.activity_card)
 
     def _build_goals_card(self):
         self.goals_body = self._create_card(
@@ -1338,7 +1237,6 @@ class MainWindow:
 
         for view in (
             self.pomodoro_detail_view,
-            self.activity_detail_view,
             self.study_progress_detail_view,
         ):
             if view is not None and view is not active_view:
@@ -1377,34 +1275,6 @@ class MainWindow:
         self._refresh_dashboard_metrics(force=True)
         self._sync_pomodoro_detail_window()
 
-    def open_activity_detail(self, task_id=None):
-        callbacks = {
-            "add": self.add_activity_task,
-            "complete": lambda task_id: self.update_activity_task_status(task_id, "completed"),
-            "reopen": lambda task_id: self.update_activity_task_status(task_id, "pending"),
-            "delete": self.delete_activity_task,
-            "back": self.close_activity_detail,
-        }
-
-        if self.activity_detail_view is None:
-            self.activity_detail_view = ActivityDetailView(
-                self.detail_container,
-                self.colors,
-                callbacks,
-            )
-            self._register_virtual_button_targets(self.activity_detail_view)
-
-        self.pending_activity_task_selection = None if task_id is None else str(task_id)
-        self._show_detail_view(self.activity_detail_view)
-        self._sync_activity_detail_window()
-
-    def close_activity_detail(self):
-        if self.activity_detail_view is not None:
-            self.activity_detail_view.pack_forget()
-        self.detail_container.pack_forget()
-        self.main_container.pack(fill="both", expand=True, padx=24, pady=24)
-        self._refresh_dashboard_metrics(force=True)
-
     def open_study_progress_detail(self):
         callbacks = {
             "back": self.close_study_progress_detail,
@@ -1427,108 +1297,6 @@ class MainWindow:
         self.detail_container.pack_forget()
         self.main_container.pack(fill="both", expand=True, padx=24, pady=24)
         self._refresh_dashboard_metrics(force=True)
-
-    def add_activity_task(self, task_data):
-        if self.activity_detail_view is None:
-            return
-
-        title = task_data["title"].strip()
-        due_date = task_data["due_date"].strip()
-        due_time = task_data["due_time"].strip()
-        notes = task_data["notes"].strip()
-
-        if not title:
-            self.activity_detail_view.set_feedback(
-                "Enter a task title before saving.",
-                "danger",
-            )
-            return
-
-        try:
-            datetime.strptime(due_date, "%Y-%m-%d")
-            datetime.strptime(due_time, "%H:%M")
-        except ValueError:
-            self.activity_detail_view.set_feedback(
-                "Use YYYY-MM-DD for date and HH:MM for time.",
-                "danger",
-            )
-            return
-
-        self.task_manager.add_task(
-            title=title,
-            due_date=due_date,
-            due_time=due_time,
-            notes=notes,
-        )
-        self.activity_detail_view.clear_form()
-        self.activity_detail_view.set_feedback(
-            "Task saved to the activity monitor.",
-            "success",
-        )
-        self._sync_activity_detail_window()
-        self._refresh_dashboard_metrics(force=True)
-
-    def update_activity_task_status(self, task_id, status):
-        if self.activity_detail_view is None:
-            return
-
-        if task_id is None:
-            self.activity_detail_view.set_feedback(
-                "Select a task first.",
-                "warning",
-            )
-            return
-
-        updated = self.task_manager.update_task_status(task_id, status)
-        if not updated:
-            self.activity_detail_view.set_feedback(
-                "The selected task could not be updated.",
-                "danger",
-            )
-            return
-
-        action_text = "completed" if status == "completed" else "reopened"
-        self.activity_detail_view.set_feedback(
-            f"Task {action_text}.",
-            "success",
-        )
-        self._sync_activity_detail_window()
-        self._refresh_dashboard_metrics(force=True)
-
-    def delete_activity_task(self, task_id):
-        if self.activity_detail_view is None:
-            return
-
-        if task_id is None:
-            self.activity_detail_view.set_feedback(
-                "Select a task first.",
-                "warning",
-            )
-            return
-
-        deleted = self.task_manager.delete_task(task_id)
-        if not deleted:
-            self.activity_detail_view.set_feedback(
-                "The selected task could not be deleted.",
-                "danger",
-            )
-            return
-
-        self.activity_detail_view.set_feedback(
-            "Task deleted.",
-            "success",
-        )
-        self._sync_activity_detail_window()
-        self._refresh_dashboard_metrics(force=True)
-
-    def _sync_activity_detail_window(self):
-        if self.activity_detail_view is None:
-            return
-
-        self.activity_detail_view.set_tasks(self.task_manager.read_tasks())
-        if self.pending_activity_task_selection is not None:
-            self.activity_detail_view.select_task(self.pending_activity_task_selection)
-            self.pending_activity_task_selection = None
 
     def _sync_study_progress_detail_window(self):
         if self.study_progress_detail_view is None:
@@ -1626,15 +1394,6 @@ class MainWindow:
                         f"card=timer screen=({screen_x},{screen_y})"
                     )
                 self.open_pomodoro_detail()
-                return
-
-            if self._point_in_widget(self.activity_card, screen_x, screen_y):
-                if DEBUG_HITBOX_CLICKS:
-                    print(
-                        f"[virtual-hitbox] action=open_activity_detail "
-                        f"card=activity screen=({screen_x},{screen_y})"
-                    )
-                self.open_activity_detail()
                 return
 
             if self._point_in_widget(self.goals_card, screen_x, screen_y):
@@ -1762,18 +1521,6 @@ class MainWindow:
 
         self.last_metrics_refresh = current_time
         metrics = self._calculate_metrics()
-        task_metrics = self._calculate_task_metrics()
-
-        self.pending_tasks_value.config(text=str(task_metrics["pending_tasks"]))
-        self.completed_tasks_value.config(text=str(task_metrics["completed_tasks"]))
-        self.due_today_value.config(text=str(task_metrics["due_today"]))
-        self.activity_summary_label.config(text=task_metrics["summary"])
-        self._update_activity_preview(task_metrics["preview_tasks"])
-        self._draw_activity_chart(
-            task_metrics["labels"],
-            task_metrics["created_counts"],
-            task_metrics["completed_counts"],
-        )
         self.streak_value_label.config(text=str(metrics["current_streak"]))
         self.streak_subtitle_label.config(text=metrics["streak_message"])
         self.streak_best_label.config(text=f"Best streak: {metrics['best_streak']} days")
@@ -1898,77 +1645,6 @@ class MainWindow:
             "total_sessions": len(sessions),
         }
 
-    def _calculate_task_metrics(self):
-        tasks = self.task_manager.read_tasks()
-        today = datetime.now().date()
-        start_date = today - timedelta(days=6)
-        dates_in_range = [start_date + timedelta(days=index) for index in range(7)]
-        created_by_day = {day: 0 for day in dates_in_range}
-        completed_by_day = {day: 0 for day in dates_in_range}
-
-        pending_tasks = 0
-        completed_tasks = 0
-        due_today = 0
-        overdue_tasks = 0
-        next_due_text = None
-
-        for task in tasks:
-            created_at = self._parse_iso_datetime(task.get("created_at", ""))
-            if created_at is not None and created_at.date() in created_by_day:
-                created_by_day[created_at.date()] += 1
-
-            completed_at = self._parse_iso_datetime(task.get("completed_at", ""))
-            if completed_at is not None and completed_at.date() in completed_by_day:
-                completed_by_day[completed_at.date()] += 1
-
-            due_at = self._parse_due_datetime(task)
-            is_completed = task.get("status") == "completed"
-
-            if is_completed:
-                completed_tasks += 1
-            else:
-                pending_tasks += 1
-
-                if due_at is not None:
-                    if due_at.date() == today:
-                        due_today += 1
-                    if due_at.date() < today:
-                        overdue_tasks += 1
-                    if next_due_text is None:
-                        next_due_text = due_at.strftime("%Y-%m-%d %H:%M")
-
-        if pending_tasks == 0 and completed_tasks == 0:
-            summary = "No activity tasks yet. Open the card to add your first one."
-        elif overdue_tasks > 0:
-            summary = f"{overdue_tasks} overdue task{'s' if overdue_tasks != 1 else ''}. Next due: {next_due_text or 'n/a'}."
-        elif next_due_text is not None:
-            summary = f"Next due: {next_due_text}. {pending_tasks} pending task{'s' if pending_tasks != 1 else ''}."
-        else:
-            summary = f"All current tasks are complete. {completed_tasks} finished so far."
-
-        labels = [day.strftime("%a") for day in dates_in_range]
-        created_counts = [created_by_day[day] for day in dates_in_range]
-        completed_counts = [completed_by_day[day] for day in dates_in_range]
-        preview_tasks = []
-
-        for task in tasks:
-            if task.get("status") == "completed" and pending_tasks > 0:
-                continue
-            preview_tasks.append(task)
-            if len(preview_tasks) == 3:
-                break
-
-        return {
-            "pending_tasks": pending_tasks,
-            "completed_tasks": completed_tasks,
-            "due_today": due_today,
-            "summary": summary,
-            "labels": labels,
-            "created_counts": created_counts,
-            "completed_counts": completed_counts,
-            "preview_tasks": preview_tasks,
-        }
-
     def _compute_current_streak(self, session_dates, today):
         streak = 0
         cursor = today
@@ -1996,24 +1672,6 @@ class MainWindow:
 
         return best
 
-    def _parse_iso_datetime(self, value):
-        if not value:
-            return None
-
-        try:
-            return datetime.fromisoformat(value)
-        except ValueError:
-            return None
-
-    def _parse_due_datetime(self, task):
-        try:
-            return datetime.strptime(
-                f"{task.get('due_date', '')} {task.get('due_time', '')}",
-                "%Y-%m-%d %H:%M",
-            )
-        except ValueError:
-            return None
-
     def _parse_session_datetime(self, session):
         try:
             return datetime.strptime(
@@ -2022,152 +1680,6 @@ class MainWindow:
             )
         except ValueError:
             return None
-
-    def _draw_activity_chart(self, labels, created_counts, completed_counts):
-        self.chart_canvas.delete("all")
-
-        width = max(self.chart_canvas.winfo_width(), 420)
-        height = max(self.chart_canvas.winfo_height(), 220)
-        left = 44
-        top = 20
-        right = width - 18
-        bottom = height - 34
-
-        self.chart_canvas.create_rectangle(
-            left,
-            top,
-            right,
-            bottom,
-            outline="",
-            fill=self.colors["card_alt"]
-        )
-
-        max_value = max(
-            max(created_counts, default=0),
-            max(completed_counts, default=0),
-            1,
-        )
-        max_value = max(5, int(max_value + 1))
-
-        for index in range(6):
-            y = top + ((bottom - top) / 5) * index
-            value = max_value - ((max_value / 5) * index)
-            self.chart_canvas.create_line(
-                left,
-                y,
-                right,
-                y,
-                fill="#22303B"
-            )
-            self.chart_canvas.create_text(
-                left - 12,
-                y,
-                text=f"{value:.0f}",
-                fill=self.colors["muted"],
-                font=("Arial", 9)
-            )
-
-        step_x = (right - left) / max(len(labels) - 1, 1)
-        pending_points = []
-        completed_points = []
-
-        for index, label in enumerate(labels):
-            x = left + step_x * index
-            self.chart_canvas.create_text(
-                x,
-                bottom + 16,
-                text=label,
-                fill=self.colors["muted"],
-                font=("Arial", 9)
-            )
-
-            pending_y = bottom - ((created_counts[index] / max_value) * (bottom - top))
-            completed_y = bottom - ((completed_counts[index] / max_value) * (bottom - top))
-            pending_points.extend([x, pending_y])
-            completed_points.extend([x, completed_y])
-
-            self.chart_canvas.create_oval(
-                x - 3,
-                pending_y - 3,
-                x + 3,
-                pending_y + 3,
-                fill=self.colors["teal"],
-                outline=self.colors["teal"]
-            )
-            self.chart_canvas.create_oval(
-                x - 3,
-                completed_y - 3,
-                x + 3,
-                completed_y + 3,
-                fill=self.colors["accent"],
-                outline=self.colors["accent"]
-            )
-
-        if len(pending_points) >= 4:
-            self.chart_canvas.create_line(
-                *pending_points,
-                fill=self.colors["teal"],
-                width=2,
-                smooth=True
-            )
-            self.chart_canvas.create_line(
-                *completed_points,
-                fill=self.colors["accent"],
-                width=2,
-                smooth=True
-            )
-
-        legend_y = height - 12
-        self.chart_canvas.create_oval(18, legend_y - 4, 26, legend_y + 4, fill=self.colors["teal"], outline="")
-        self.chart_canvas.create_text(56, legend_y, text="Tasks Added", fill=self.colors["teal"], font=("Arial", 9), anchor="center")
-        self.chart_canvas.create_oval(144, legend_y - 4, 152, legend_y + 4, fill=self.colors["accent"], outline="")
-        self.chart_canvas.create_text(201, legend_y, text="Tasks Completed", fill=self.colors["accent"], font=("Arial", 9), anchor="center")
-
-    def _update_activity_preview(self, tasks):
-        if not tasks:
-            self.activity_preview_title.config(text="Upcoming Tasks")
-            self.activity_preview_labels[0].config(
-                text="No tasks yet. Open Activity Monitor to add one.",
-                fg=self.colors["muted"],
-            )
-            for label in self.activity_preview_labels[1:]:
-                label.config(text="", fg=self.colors["text"])
-            return
-
-        pending_count = sum(1 for task in tasks if task.get("status") != "completed")
-        if pending_count > 0:
-            self.activity_preview_title.config(text="Upcoming Tasks")
-        else:
-            self.activity_preview_title.config(text="Recent Completed Tasks")
-
-        for index, label in enumerate(self.activity_preview_labels):
-            if index >= len(tasks):
-                label.config(text="", fg=self.colors["text"])
-                label.unbind("<Button-1>")
-                setattr(label, "_virtual_click_action", None)
-                setattr(label, "_virtual_click_name", None)
-                continue
-
-            task = tasks[index]
-            status_prefix = "Done" if task.get("status") == "completed" else "Due"
-            due_text = f"{task.get('due_date', '')} {task.get('due_time', '')}".strip()
-            if not due_text:
-                due_text = "No due date"
-
-            task_id = str(task.get("task_id", ""))
-            label.config(
-                text=f"{task.get('title', 'Untitled Task')}  |  {status_prefix}: {due_text}",
-                fg=self.colors["text"] if task.get("status") != "completed" else self.colors["muted"],
-            )
-            self._set_hitbox_action(
-                label,
-                lambda selected_task_id=task_id: self.open_activity_detail(selected_task_id),
-                f"open_activity_detail:{task_id}",
-            )
-            try:
-                label.configure(cursor="hand2")
-            except tk.TclError:
-                pass
 
     def _format_minutes(self, minutes):
         total_minutes = int(round(minutes))
