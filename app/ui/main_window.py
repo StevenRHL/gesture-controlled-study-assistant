@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from PIL import Image, ImageTk
 import cv2
+import pyautogui
 
 from app.core.camera import Camera
 from app.core.hand_detector import HandDetector
@@ -15,11 +16,16 @@ from app.core.virtual_mouse import VirtualMouse
 
 from app.features.study_timer import StudyTimer
 from app.features.session_logger import SessionLogger
+from app.features.task_manager import TaskManager
 
+from app.ui.activity_detail_window import ActivityDetailView
 from app.ui.assistive_touch_cursor import AssistiveTouchCursor
 from app.ui.pomodoro_detail_window import PomodoroDetailView
 from app.ui.sessions_window import SessionsWindow
 
+pyautogui.FAILSAFE = False
+DEBUG_HITBOX_CLICKS = True
+INTERACTIVE_WIDGET_CLASSES = {"Button", "Entry", "Text", "TEntry", "Treeview"}
 
 class MainWindow:
     def __init__(self, root):
@@ -61,6 +67,7 @@ class MainWindow:
             value=str(self.study_timer.get_duration_minutes())
         )
         self.session_logger = SessionLogger()
+        self.task_manager = TaskManager()
 
         self.previous_requested_action = None
         self.previous_left_gesture = None
@@ -77,6 +84,9 @@ class MainWindow:
         self.virtual_mouse = None
         self.last_metrics_refresh = 0
         self.pomodoro_detail_view = None
+        self.activity_detail_view = None
+        self.pending_activity_task_selection = None
+        self.update_after_id = None
 
         self._build_ui()
         self.assistive_touch_cursor = AssistiveTouchCursor(self.root)
@@ -246,10 +256,26 @@ class MainWindow:
 
         self._build_timer_display(dial_panel)
         self._build_timer_controls_panel(controls_panel)
-        self._bind_timer_detail_trigger(dial_panel)
+        self.timer_card = self.timer_body.master
+        self._bind_timer_detail_trigger(self.timer_card)
 
     def _bind_timer_detail_trigger(self, widget):
-        widget.bind("<Button-1>", lambda _event: self.open_pomodoro_detail())
+        self._register_detail_trigger(
+            widget,
+            self.open_pomodoro_detail,
+            "open_pomodoro_detail",
+        )
+
+    def _bind_activity_detail_trigger(self, widget):
+        self._register_detail_trigger(
+            widget,
+            self.open_activity_detail,
+            "open_activity_detail",
+        )
+
+    def _register_detail_trigger(self, widget, callback, action_name):
+        if widget.winfo_class() not in INTERACTIVE_WIDGET_CLASSES:
+            self._set_hitbox_action(widget, callback, action_name)
 
         try:
             widget.configure(cursor="hand2")
@@ -257,7 +283,111 @@ class MainWindow:
             pass
 
         for child in widget.winfo_children():
-            self._bind_timer_detail_trigger(child)
+            self._register_detail_trigger(child, callback, action_name)
+
+    def _set_virtual_click_metadata(self, widget, callback, action_name):
+        setattr(widget, "_virtual_click_action", callback)
+        setattr(widget, "_virtual_click_name", action_name)
+
+    def _set_hitbox_action(self, widget, callback, action_name):
+        self._set_virtual_click_metadata(widget, callback, action_name)
+        widget.bind(
+            "<Button-1>",
+            lambda _event, bound_callback=callback, bound_name=action_name, bound_widget=widget:
+                self._run_hitbox_action(bound_callback, bound_name, bound_widget)
+        )
+
+    def _register_virtual_button_targets(self, widget):
+        try:
+            widget_class = widget.winfo_class()
+        except tk.TclError:
+            return
+
+        if widget_class == "Button":
+            try:
+                label = widget.cget("text").strip()
+            except tk.TclError:
+                label = ""
+            action_name = f"button:{label}" if label else "button"
+            self._set_virtual_click_metadata(widget, widget.invoke, action_name)
+
+        for child in widget.winfo_children():
+            self._register_virtual_button_targets(child)
+
+    def _run_hitbox_action(self, callback, action_name, widget):
+        if DEBUG_HITBOX_CLICKS:
+            print(
+                f"[hitbox-click] action={action_name} "
+                f"widget={widget.winfo_class()} name={widget.winfo_name()}"
+            )
+        callback()
+
+    def _resolve_hitbox_action(self, widget):
+        current = widget
+        while current is not None:
+            callback = getattr(current, "_virtual_click_action", None)
+            action_name = getattr(current, "_virtual_click_name", None)
+            if callable(callback):
+                return current, callback, action_name or callback.__name__
+            current = current.master
+        return None, None, None
+
+    def _resolve_invokable_widget(self, widget):
+        current = widget
+        while current is not None:
+            invoke = getattr(current, "invoke", None)
+            if callable(invoke):
+                return current, invoke
+            current = current.master
+        return None, None
+
+    def _point_in_widget(self, widget, screen_x, screen_y):
+        try:
+            if not widget.winfo_exists() or not widget.winfo_ismapped():
+                return False
+        except tk.TclError:
+            return False
+
+        left = widget.winfo_rootx()
+        top = widget.winfo_rooty()
+        right = left + widget.winfo_width()
+        bottom = top + widget.winfo_height()
+        return left <= screen_x <= right and top <= screen_y <= bottom
+
+    def _get_active_detail_view(self):
+        for view in (self.pomodoro_detail_view, self.activity_detail_view):
+            try:
+                if view is not None and view.winfo_exists() and view.winfo_ismapped():
+                    return view
+            except tk.TclError:
+                continue
+        return None
+
+    def _resolve_virtual_action_at(self, widget, screen_x, screen_y):
+        try:
+            if not widget.winfo_exists() or not widget.winfo_ismapped():
+                return None, None, None
+        except tk.TclError:
+            return None, None, None
+
+        for child in reversed(widget.winfo_children()):
+            resolved_widget, callback, action_name = self._resolve_virtual_action_at(
+                child,
+                screen_x,
+                screen_y,
+            )
+            if callback is not None:
+                return resolved_widget, callback, action_name
+
+        if not self._point_in_widget(widget, screen_x, screen_y):
+            return None, None, None
+
+        callback = getattr(widget, "_virtual_click_action", None)
+        action_name = getattr(widget, "_virtual_click_name", None)
+        if callable(callback):
+            return widget, callback, action_name or callback.__name__
+
+        return None, None, None
 
     def _build_timer_display(self, parent):
         self.timer_canvas = tk.Canvas(
@@ -412,33 +542,80 @@ class MainWindow:
         stats_row = tk.Frame(self.activity_body, bg=self.colors["card"])
         stats_row.pack(fill="x", pady=(0, 14))
 
-        self.weekly_time_value = self._build_stat_block(
+        self.pending_tasks_value = self._build_stat_block(
             stats_row,
-            "Study Time",
-            "0h 00m",
+            "Pending",
+            "0",
             self.colors["teal"]
         )
-        self.session_count_value = self._build_stat_block(
+        self.completed_tasks_value = self._build_stat_block(
             stats_row,
             "Tasks Completed",
             "0",
             self.colors["accent"]
         )
-        self.focus_score_value = self._build_stat_block(
+        self.due_today_value = self._build_stat_block(
             stats_row,
-            "Focus Score",
+            "Due Today",
             "0",
             self.colors["success"]
         )
 
+        self.activity_summary_label = tk.Label(
+            self.activity_body,
+            text="Open the activity monitor to manage tasks and due dates.",
+            font=("Arial", 10),
+            bg=self.colors["card"],
+            fg=self.colors["muted"],
+            anchor="w",
+            justify="left",
+        )
+        self.activity_summary_label.pack(fill="x", pady=(0, 10))
+
+        self.activity_preview_frame = tk.Frame(
+            self.activity_body,
+            bg=self.colors["card_alt"],
+            highlightbackground=self.colors["border"],
+            highlightthickness=1,
+            padx=12,
+            pady=12,
+        )
+        self.activity_preview_frame.pack(fill="x", pady=(0, 10))
+
+        self.activity_preview_title = tk.Label(
+            self.activity_preview_frame,
+            text="Upcoming Tasks",
+            font=("Arial", 11, "bold"),
+            bg=self.colors["card_alt"],
+            fg=self.colors["accent_bright"],
+            anchor="w",
+        )
+        self.activity_preview_title.pack(fill="x", pady=(0, 8))
+
+        self.activity_preview_labels = []
+        for _ in range(3):
+            label = tk.Label(
+                self.activity_preview_frame,
+                text="",
+                font=("Arial", 10),
+                bg=self.colors["card_alt"],
+                fg=self.colors["text"],
+                anchor="w",
+                justify="left",
+            )
+            label.pack(fill="x", pady=2)
+            self.activity_preview_labels.append(label)
+
         self.chart_canvas = tk.Canvas(
             self.activity_body,
-            height=220,
+            height=170,
             bg=self.colors["card_alt"],
             highlightbackground=self.colors["border"],
             highlightthickness=1
         )
         self.chart_canvas.pack(fill="both", expand=True, pady=(4, 0))
+        self.activity_card = self.activity_body.master
+        self._bind_activity_detail_trigger(self.activity_card)
 
     def _build_goals_card(self):
         self.goals_body = self._create_card(
@@ -917,7 +1094,9 @@ class MainWindow:
             text=f"Mouse Mode: {'On' if self.virtual_mouse_mode else 'Off'}"
         )
 
-        if not self.virtual_mouse_mode:
+        if self.virtual_mouse_mode:
+            self.root.configure(cursor="")
+        else:
             self.assistive_touch_cursor.hide()
 
     def _get_requested_duration_minutes(self):
@@ -1137,9 +1316,17 @@ class MainWindow:
     def open_sessions_window(self):
         SessionsWindow(self.root, self.session_logger)
 
-    def open_pomodoro_detail(self):
+    def _show_detail_view(self, active_view):
         self.main_container.pack_forget()
 
+        for view in (self.pomodoro_detail_view, self.activity_detail_view):
+            if view is not None and view is not active_view:
+                view.pack_forget()
+
+        self.detail_container.pack(fill="both", expand=True, padx=24, pady=24)
+        active_view.pack(fill="both", expand=True)
+
+    def open_pomodoro_detail(self):
         callbacks = {
             "start": lambda: self.run_confirmed_action("start"),
             "pause": lambda: self.run_confirmed_action("pause"),
@@ -1156,16 +1343,148 @@ class MainWindow:
                 self.colors,
                 callbacks
             )
-            self.pomodoro_detail_view.pack(fill="both", expand=True)
+            self._register_virtual_button_targets(self.pomodoro_detail_view)
 
-        self.detail_container.pack(fill="both", expand=True, padx=24, pady=24)
+        self._show_detail_view(self.pomodoro_detail_view)
         self._sync_pomodoro_detail_window()
 
     def close_pomodoro_detail(self):
+        if self.pomodoro_detail_view is not None:
+            self.pomodoro_detail_view.pack_forget()
         self.detail_container.pack_forget()
         self.main_container.pack(fill="both", expand=True, padx=24, pady=24)
         self._refresh_dashboard_metrics(force=True)
         self._sync_pomodoro_detail_window()
+
+    def open_activity_detail(self, task_id=None):
+        callbacks = {
+            "add": self.add_activity_task,
+            "complete": lambda task_id: self.update_activity_task_status(task_id, "completed"),
+            "reopen": lambda task_id: self.update_activity_task_status(task_id, "pending"),
+            "delete": self.delete_activity_task,
+            "back": self.close_activity_detail,
+        }
+
+        if self.activity_detail_view is None:
+            self.activity_detail_view = ActivityDetailView(
+                self.detail_container,
+                self.colors,
+                callbacks,
+            )
+            self._register_virtual_button_targets(self.activity_detail_view)
+
+        self.pending_activity_task_selection = None if task_id is None else str(task_id)
+        self._show_detail_view(self.activity_detail_view)
+        self._sync_activity_detail_window()
+
+    def close_activity_detail(self):
+        if self.activity_detail_view is not None:
+            self.activity_detail_view.pack_forget()
+        self.detail_container.pack_forget()
+        self.main_container.pack(fill="both", expand=True, padx=24, pady=24)
+        self._refresh_dashboard_metrics(force=True)
+
+    def add_activity_task(self, task_data):
+        if self.activity_detail_view is None:
+            return
+
+        title = task_data["title"].strip()
+        due_date = task_data["due_date"].strip()
+        due_time = task_data["due_time"].strip()
+        notes = task_data["notes"].strip()
+
+        if not title:
+            self.activity_detail_view.set_feedback(
+                "Enter a task title before saving.",
+                "danger",
+            )
+            return
+
+        try:
+            datetime.strptime(due_date, "%Y-%m-%d")
+            datetime.strptime(due_time, "%H:%M")
+        except ValueError:
+            self.activity_detail_view.set_feedback(
+                "Use YYYY-MM-DD for date and HH:MM for time.",
+                "danger",
+            )
+            return
+
+        self.task_manager.add_task(
+            title=title,
+            due_date=due_date,
+            due_time=due_time,
+            notes=notes,
+        )
+        self.activity_detail_view.clear_form()
+        self.activity_detail_view.set_feedback(
+            "Task saved to the activity monitor.",
+            "success",
+        )
+        self._sync_activity_detail_window()
+        self._refresh_dashboard_metrics(force=True)
+
+    def update_activity_task_status(self, task_id, status):
+        if self.activity_detail_view is None:
+            return
+
+        if task_id is None:
+            self.activity_detail_view.set_feedback(
+                "Select a task first.",
+                "warning",
+            )
+            return
+
+        updated = self.task_manager.update_task_status(task_id, status)
+        if not updated:
+            self.activity_detail_view.set_feedback(
+                "The selected task could not be updated.",
+                "danger",
+            )
+            return
+
+        action_text = "completed" if status == "completed" else "reopened"
+        self.activity_detail_view.set_feedback(
+            f"Task {action_text}.",
+            "success",
+        )
+        self._sync_activity_detail_window()
+        self._refresh_dashboard_metrics(force=True)
+
+    def delete_activity_task(self, task_id):
+        if self.activity_detail_view is None:
+            return
+
+        if task_id is None:
+            self.activity_detail_view.set_feedback(
+                "Select a task first.",
+                "warning",
+            )
+            return
+
+        deleted = self.task_manager.delete_task(task_id)
+        if not deleted:
+            self.activity_detail_view.set_feedback(
+                "The selected task could not be deleted.",
+                "danger",
+            )
+            return
+
+        self.activity_detail_view.set_feedback(
+            "Task deleted.",
+            "success",
+        )
+        self._sync_activity_detail_window()
+        self._refresh_dashboard_metrics(force=True)
+
+    def _sync_activity_detail_window(self):
+        if self.activity_detail_view is None:
+            return
+
+        self.activity_detail_view.set_tasks(self.task_manager.read_tasks())
+        if self.pending_activity_task_selection is not None:
+            self.activity_detail_view.select_task(self.pending_activity_task_selection)
+            self.pending_activity_task_selection = None
 
     def _sync_pomodoro_detail_window(self):
         if self.pomodoro_detail_view is None:
@@ -1211,6 +1530,8 @@ class MainWindow:
 
         mouse_x, mouse_y, clicked, scroll_delta = self.virtual_mouse.process(frame)
 
+        self._move_system_cursor(mouse_x, mouse_y)
+
         self.assistive_touch_cursor.update_cursor(
             mouse_x,
             mouse_y,
@@ -1221,31 +1542,112 @@ class MainWindow:
         if scroll_delta != 0:
             self.root.after(0, self._dispatch_virtual_scroll, mouse_x, mouse_y, scroll_delta)
 
-    def _dispatch_virtual_click(self, x, y):
-        self.assistive_touch_cursor.hide_temporarily()
-
+    def _move_system_cursor(self, x, y):
         screen_x = self.root.winfo_rootx() + x
         screen_y = self.root.winfo_rooty() + y
-        target = self.root.winfo_containing(screen_x, screen_y)
 
+        try:
+            pyautogui.moveTo(screen_x, screen_y, _pause=False)
+        except Exception as error:
+            self.confirm_label.config(
+                text=f"Mouse mode cannot move the system cursor: {error}",
+                fg=self.colors["warning"],
+            )
+
+    def _dispatch_virtual_click(self, x, y):
+        self.root.update_idletasks()
+
+        try:
+            pointer_x, pointer_y = pyautogui.position()
+            screen_x = int(pointer_x)
+            screen_y = int(pointer_y)
+        except Exception:
+            screen_x = self.root.winfo_rootx() + x
+            screen_y = self.root.winfo_rooty() + y
+
+        if self.main_container.winfo_ismapped():
+            if self._point_in_widget(self.timer_card, screen_x, screen_y):
+                if DEBUG_HITBOX_CLICKS:
+                    print(
+                        f"[virtual-hitbox] action=open_pomodoro_detail "
+                        f"card=timer screen=({screen_x},{screen_y})"
+                    )
+                self.open_pomodoro_detail()
+                return
+
+            if self._point_in_widget(self.activity_card, screen_x, screen_y):
+                if DEBUG_HITBOX_CLICKS:
+                    print(
+                        f"[virtual-hitbox] action=open_activity_detail "
+                        f"card=activity screen=({screen_x},{screen_y})"
+                    )
+                self.open_activity_detail()
+                return
+
+        active_detail_view = self._get_active_detail_view()
+        if active_detail_view is not None:
+            hitbox_widget, hitbox_callback, action_name = self._resolve_virtual_action_at(
+                active_detail_view,
+                screen_x,
+                screen_y,
+            )
+            if hitbox_callback is not None:
+                if DEBUG_HITBOX_CLICKS:
+                    print(
+                        f"[virtual-hitbox] action={action_name} "
+                        f"widget={hitbox_widget.winfo_class()} name={hitbox_widget.winfo_name()} "
+                        f"screen=({screen_x},{screen_y})"
+                    )
+                hitbox_callback()
+                return
+
+        target = self.root.winfo_containing(screen_x, screen_y)
         if target is None:
+            try:
+                pyautogui.click(screen_x, screen_y)
+            except Exception as error:
+                self.confirm_label.config(
+                    text=f"Mouse mode cannot click the system cursor: {error}",
+                    fg=self.colors["warning"],
+                )
             return
 
         local_x = screen_x - target.winfo_rootx()
         local_y = screen_y - target.winfo_rooty()
 
-        try:
-            target.focus_set()
-        except tk.TclError:
-            pass
+        hitbox_widget, hitbox_callback, action_name = self._resolve_hitbox_action(target)
+        if hitbox_callback is not None:
+            if DEBUG_HITBOX_CLICKS:
+                print(
+                    f"[virtual-click] action={action_name} "
+                    f"target={target.winfo_class()} name={target.winfo_name()} "
+                    f"resolved={hitbox_widget.winfo_class()} resolved_name={hitbox_widget.winfo_name()} "
+                    f"screen=({screen_x},{screen_y}) local=({local_x},{local_y})"
+                )
+            hitbox_callback()
+            return
 
-        invoke = getattr(target, "invoke", None)
-        if callable(invoke):
+        invokable_widget, invoke = self._resolve_invokable_widget(target)
+        if invoke is not None:
+            if DEBUG_HITBOX_CLICKS:
+                print(
+                    f"[virtual-invoke] "
+                    f"target={target.winfo_class()} name={target.winfo_name()} "
+                    f"resolved={invokable_widget.winfo_class()} resolved_name={invokable_widget.winfo_name()} "
+                    f"screen=({screen_x},{screen_y}) local=({local_x},{local_y})"
+                )
             try:
                 invoke()
                 return
             except tk.TclError:
                 pass
+
+        try:
+            if not target.winfo_exists():
+                return
+            target.focus_set()
+        except tk.TclError:
+            pass
 
         for sequence in ("<Enter>", "<Motion>", "<ButtonPress-1>", "<ButtonRelease-1>"):
             try:
@@ -1298,10 +1700,18 @@ class MainWindow:
 
         self.last_metrics_refresh = current_time
         metrics = self._calculate_metrics()
+        task_metrics = self._calculate_task_metrics()
 
-        self.weekly_time_value.config(text=self._format_minutes(metrics["weekly_minutes"]))
-        self.session_count_value.config(text=str(metrics["weekly_sessions"]))
-        self.focus_score_value.config(text=str(metrics["focus_score"]))
+        self.pending_tasks_value.config(text=str(task_metrics["pending_tasks"]))
+        self.completed_tasks_value.config(text=str(task_metrics["completed_tasks"]))
+        self.due_today_value.config(text=str(task_metrics["due_today"]))
+        self.activity_summary_label.config(text=task_metrics["summary"])
+        self._update_activity_preview(task_metrics["preview_tasks"])
+        self._draw_activity_chart(
+            task_metrics["labels"],
+            task_metrics["created_counts"],
+            task_metrics["completed_counts"],
+        )
         self.streak_value_label.config(text=str(metrics["current_streak"]))
         self.streak_subtitle_label.config(text=metrics["streak_message"])
         self.streak_best_label.config(text=f"Best streak: {metrics['best_streak']} days")
@@ -1336,8 +1746,6 @@ class MainWindow:
             int(280 * goal_ratio),
             10
         )
-
-        self._draw_activity_chart(metrics["labels"], metrics["hours"], metrics["sessions_scaled"])
 
     def _calculate_metrics(self):
         sessions = self.session_logger.read_sessions()
@@ -1391,10 +1799,6 @@ class MainWindow:
         else:
             streak_message = f"{current_streak} straight study days."
 
-        labels = [day.strftime("%a") for day in dates_in_range]
-        hours = [round(minutes_by_day[day] / 60, 2) for day in dates_in_range]
-        sessions_scaled = [sessions_by_day[day] * 0.8 for day in dates_in_range]
-
         return {
             "weekly_minutes": weekly_minutes,
             "weekly_sessions": weekly_sessions,
@@ -1404,9 +1808,77 @@ class MainWindow:
             "best_streak": best_streak,
             "goal_message": goal_message,
             "streak_message": streak_message,
+        }
+
+    def _calculate_task_metrics(self):
+        tasks = self.task_manager.read_tasks()
+        today = datetime.now().date()
+        start_date = today - timedelta(days=6)
+        dates_in_range = [start_date + timedelta(days=index) for index in range(7)]
+        created_by_day = {day: 0 for day in dates_in_range}
+        completed_by_day = {day: 0 for day in dates_in_range}
+
+        pending_tasks = 0
+        completed_tasks = 0
+        due_today = 0
+        overdue_tasks = 0
+        next_due_text = None
+
+        for task in tasks:
+            created_at = self._parse_iso_datetime(task.get("created_at", ""))
+            if created_at is not None and created_at.date() in created_by_day:
+                created_by_day[created_at.date()] += 1
+
+            completed_at = self._parse_iso_datetime(task.get("completed_at", ""))
+            if completed_at is not None and completed_at.date() in completed_by_day:
+                completed_by_day[completed_at.date()] += 1
+
+            due_at = self._parse_due_datetime(task)
+            is_completed = task.get("status") == "completed"
+
+            if is_completed:
+                completed_tasks += 1
+            else:
+                pending_tasks += 1
+
+                if due_at is not None:
+                    if due_at.date() == today:
+                        due_today += 1
+                    if due_at.date() < today:
+                        overdue_tasks += 1
+                    if next_due_text is None:
+                        next_due_text = due_at.strftime("%Y-%m-%d %H:%M")
+
+        if pending_tasks == 0 and completed_tasks == 0:
+            summary = "No activity tasks yet. Open the card to add your first one."
+        elif overdue_tasks > 0:
+            summary = f"{overdue_tasks} overdue task{'s' if overdue_tasks != 1 else ''}. Next due: {next_due_text or 'n/a'}."
+        elif next_due_text is not None:
+            summary = f"Next due: {next_due_text}. {pending_tasks} pending task{'s' if pending_tasks != 1 else ''}."
+        else:
+            summary = f"All current tasks are complete. {completed_tasks} finished so far."
+
+        labels = [day.strftime("%a") for day in dates_in_range]
+        created_counts = [created_by_day[day] for day in dates_in_range]
+        completed_counts = [completed_by_day[day] for day in dates_in_range]
+        preview_tasks = []
+
+        for task in tasks:
+            if task.get("status") == "completed" and pending_tasks > 0:
+                continue
+            preview_tasks.append(task)
+            if len(preview_tasks) == 3:
+                break
+
+        return {
+            "pending_tasks": pending_tasks,
+            "completed_tasks": completed_tasks,
+            "due_today": due_today,
+            "summary": summary,
             "labels": labels,
-            "hours": hours,
-            "sessions_scaled": sessions_scaled,
+            "created_counts": created_counts,
+            "completed_counts": completed_counts,
+            "preview_tasks": preview_tasks,
         }
 
     def _compute_current_streak(self, session_dates, today):
@@ -1436,7 +1908,25 @@ class MainWindow:
 
         return best
 
-    def _draw_activity_chart(self, labels, hours, sessions_scaled):
+    def _parse_iso_datetime(self, value):
+        if not value:
+            return None
+
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _parse_due_datetime(self, task):
+        try:
+            return datetime.strptime(
+                f"{task.get('due_date', '')} {task.get('due_time', '')}",
+                "%Y-%m-%d %H:%M",
+            )
+        except ValueError:
+            return None
+
+    def _draw_activity_chart(self, labels, created_counts, completed_counts):
         self.chart_canvas.delete("all")
 
         width = max(self.chart_canvas.winfo_width(), 420)
@@ -1455,7 +1945,11 @@ class MainWindow:
             fill=self.colors["card_alt"]
         )
 
-        max_value = max(max(hours, default=0), max(sessions_scaled, default=0), 1)
+        max_value = max(
+            max(created_counts, default=0),
+            max(completed_counts, default=0),
+            1,
+        )
         max_value = max(5, int(max_value + 1))
 
         for index in range(6):
@@ -1477,8 +1971,8 @@ class MainWindow:
             )
 
         step_x = (right - left) / max(len(labels) - 1, 1)
-        teal_points = []
-        accent_points = []
+        pending_points = []
+        completed_points = []
 
         for index, label in enumerate(labels):
             x = left + step_x * index
@@ -1490,37 +1984,37 @@ class MainWindow:
                 font=("Arial", 9)
             )
 
-            teal_y = bottom - ((hours[index] / max_value) * (bottom - top))
-            accent_y = bottom - ((sessions_scaled[index] / max_value) * (bottom - top))
-            teal_points.extend([x, teal_y])
-            accent_points.extend([x, accent_y])
+            pending_y = bottom - ((created_counts[index] / max_value) * (bottom - top))
+            completed_y = bottom - ((completed_counts[index] / max_value) * (bottom - top))
+            pending_points.extend([x, pending_y])
+            completed_points.extend([x, completed_y])
 
             self.chart_canvas.create_oval(
                 x - 3,
-                teal_y - 3,
+                pending_y - 3,
                 x + 3,
-                teal_y + 3,
+                pending_y + 3,
                 fill=self.colors["teal"],
                 outline=self.colors["teal"]
             )
             self.chart_canvas.create_oval(
                 x - 3,
-                accent_y - 3,
+                completed_y - 3,
                 x + 3,
-                accent_y + 3,
+                completed_y + 3,
                 fill=self.colors["accent"],
                 outline=self.colors["accent"]
             )
 
-        if len(teal_points) >= 4:
+        if len(pending_points) >= 4:
             self.chart_canvas.create_line(
-                *teal_points,
+                *pending_points,
                 fill=self.colors["teal"],
                 width=2,
                 smooth=True
             )
             self.chart_canvas.create_line(
-                *accent_points,
+                *completed_points,
                 fill=self.colors["accent"],
                 width=2,
                 smooth=True
@@ -1528,9 +2022,55 @@ class MainWindow:
 
         legend_y = height - 12
         self.chart_canvas.create_oval(18, legend_y - 4, 26, legend_y + 4, fill=self.colors["teal"], outline="")
-        self.chart_canvas.create_text(56, legend_y, text="Study Time (h)", fill=self.colors["teal"], font=("Arial", 9), anchor="center")
+        self.chart_canvas.create_text(56, legend_y, text="Tasks Added", fill=self.colors["teal"], font=("Arial", 9), anchor="center")
         self.chart_canvas.create_oval(144, legend_y - 4, 152, legend_y + 4, fill=self.colors["accent"], outline="")
-        self.chart_canvas.create_text(191, legend_y, text="Sessions", fill=self.colors["accent"], font=("Arial", 9), anchor="center")
+        self.chart_canvas.create_text(201, legend_y, text="Tasks Completed", fill=self.colors["accent"], font=("Arial", 9), anchor="center")
+
+    def _update_activity_preview(self, tasks):
+        if not tasks:
+            self.activity_preview_title.config(text="Upcoming Tasks")
+            self.activity_preview_labels[0].config(
+                text="No tasks yet. Open Activity Monitor to add one.",
+                fg=self.colors["muted"],
+            )
+            for label in self.activity_preview_labels[1:]:
+                label.config(text="", fg=self.colors["text"])
+            return
+
+        pending_count = sum(1 for task in tasks if task.get("status") != "completed")
+        if pending_count > 0:
+            self.activity_preview_title.config(text="Upcoming Tasks")
+        else:
+            self.activity_preview_title.config(text="Recent Completed Tasks")
+
+        for index, label in enumerate(self.activity_preview_labels):
+            if index >= len(tasks):
+                label.config(text="", fg=self.colors["text"])
+                label.unbind("<Button-1>")
+                setattr(label, "_virtual_click_action", None)
+                setattr(label, "_virtual_click_name", None)
+                continue
+
+            task = tasks[index]
+            status_prefix = "Done" if task.get("status") == "completed" else "Due"
+            due_text = f"{task.get('due_date', '')} {task.get('due_time', '')}".strip()
+            if not due_text:
+                due_text = "No due date"
+
+            task_id = str(task.get("task_id", ""))
+            label.config(
+                text=f"{task.get('title', 'Untitled Task')}  |  {status_prefix}: {due_text}",
+                fg=self.colors["text"] if task.get("status") != "completed" else self.colors["muted"],
+            )
+            self._set_hitbox_action(
+                label,
+                lambda selected_task_id=task_id: self.open_activity_detail(selected_task_id),
+                f"open_activity_detail:{task_id}",
+            )
+            try:
+                label.configure(cursor="hand2")
+            except tk.TclError:
+                pass
 
     def _format_minutes(self, minutes):
         total_minutes = int(round(minutes))
@@ -1623,9 +2163,12 @@ class MainWindow:
 
             self._refresh_dashboard_metrics()
 
-        self.root.after(15, self.update_loop)
+        self.update_after_id = self.root.after(15, self.update_loop)
 
     def on_close(self):
+        if self.update_after_id is not None:
+            self.root.after_cancel(self.update_after_id)
+            self.update_after_id = None
         self.camera.release()
         self.hand_detector.close()
         if self.virtual_mouse is not None:

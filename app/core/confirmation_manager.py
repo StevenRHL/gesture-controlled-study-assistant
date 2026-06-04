@@ -19,8 +19,6 @@ class ConfirmationManager:
         self.message = f"Confirm {action.upper()} with left fist"
         self.created_at = time.time()
 
-        print(self.message)
-
     def update(self):
         if self.pending_action is None:
             return
@@ -28,7 +26,6 @@ class ConfirmationManager:
         elapsed = time.time() - self.created_at
 
         if elapsed > self.timeout_seconds:
-            print("Confirmation timed out.")
             self.clear()
 
     def confirm(self):

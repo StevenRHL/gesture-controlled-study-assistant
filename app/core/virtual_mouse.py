@@ -46,7 +46,8 @@ PRE_PINCH_SLOWDOWN_THRESHOLD = 0.34
 PRE_PINCH_MIN_MOVEMENT_SCALE = 0.08
 
 # Number of consecutive frames a pinch must be held before the click fires.
-PINCH_CONFIRM_FRAMES = 2
+# Keep this at 1 so a normal quick pinch clicks without needing a scroll-like hold.
+PINCH_CONFIRM_FRAMES = 1
 
 SCROLL_STEP_PIXELS = 22
 SCROLL_DELTA_UNITS = 120
@@ -160,8 +161,8 @@ class VirtualMouse:
         # ── 1. Pinch detection ────────────────────────────────────────────────
         pinch_ratio = self._pinch_ratio(landmarks)
         self.last_pinch_ratio = pinch_ratio
-        is_pinch    = pinch_ratio < PINCH_THRESHOLD
-        is_scroll_gesture = is_pinch and self._is_scroll_gesture(landmarks)
+        is_pinch = pinch_ratio < PINCH_THRESHOLD
+        is_scroll_pose = is_pinch and self._is_scroll_gesture(landmarks)
 
         # ── 2. Raw index-tip position mapped to screen space ─────────────────
         # We flip x so the cursor mirrors naturally (webcam is flipped).
@@ -177,34 +178,26 @@ class VirtualMouse:
         self._cursor_x = self._cursor_x + effective_alpha * (raw_x - self._cursor_x)
         self._cursor_y = self._cursor_y + effective_alpha * (raw_y - self._cursor_y)
 
-        if is_scroll_gesture:
-            self._pinch_frame_count = 0
-            self._is_pinching = False
-            display_x, display_y = int(self._cursor_x), int(self._cursor_y)
-            self._frozen_x = self._cursor_x
-            self._frozen_y = self._cursor_y
-            scroll_delta = self._compute_scroll_delta(landmarks)
-
-        elif is_pinch:
+        if is_pinch:
             self._pinch_frame_count += 1
-            self._scroll_anchor_y = None
         else:
             self._pinch_frame_count = 0
-            self._is_pinching       = False
+            self._is_pinching = False
             self._scroll_anchor_y = None
 
         # ── 4. Position freeze & click logic ─────────────────────────────────
-        if is_scroll_gesture:
-            if self.move_mouse:
-                pyautogui.moveTo(display_x, display_y, _pause=False)
-
-        elif self._is_pinching:
+        if self._is_pinching:
             # Already in a pinch – keep circle locked, don't re-click
             display_x, display_y = int(self._frozen_x), int(self._frozen_y)
+            if is_scroll_pose:
+                scroll_delta = self._compute_scroll_delta(landmarks)
+            else:
+                self._scroll_anchor_y = None
 
         elif self._pinch_frame_count >= PINCH_CONFIRM_FRAMES:
             # New pinch confirmed this frame
             self._is_pinching = True
+            self._scroll_anchor_y = None
 
             # Freeze position to where the finger was BEFORE it moved down
             self._frozen_x = self._cursor_x
