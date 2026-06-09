@@ -8,10 +8,13 @@ class ActivityDetailView(tk.Frame):
         self.colors = colors
         self.callbacks = callbacks
         self.tasks_by_id = {}
+        self.editing_task_id = None
 
         self.title_var = tk.StringVar()
         self.due_date_var = tk.StringVar()
         self.due_time_var = tk.StringVar()
+        self.submit_button_var = tk.StringVar(value="Add Task")
+        self.clear_button_var = tk.StringVar(value="Clear")
 
         self._build_ui()
 
@@ -187,43 +190,49 @@ class ActivityDetailView(tk.Frame):
 
         action_row = tk.Frame(form_card, bg=self.colors["card_alt"])
         action_row.pack(fill="x")
-        for column in range(5):
+        for column in range(6):
             action_row.grid_columnconfigure(column, weight=1, uniform="activity-actions")
 
         self._build_button(
             action_row,
-            "Add Task",
-            self._handle_add_task,
+            self.submit_button_var,
+            self._handle_submit_task,
             bg=self.colors["accent"],
             fg="#17120D",
         ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
         self._build_button(
             action_row,
-            "Clear",
+            self.clear_button_var,
             self.clear_form,
             bg="#1D2731",
         ).grid(row=0, column=1, sticky="ew", padx=6)
+        self._build_button(
+            action_row,
+            "Edit Selected",
+            self._handle_edit_task,
+            bg="#243240",
+        ).grid(row=0, column=2, sticky="ew", padx=6)
         self._build_button(
             action_row,
             "Complete",
             self._handle_complete_task,
             bg=self.colors["success"],
             fg="#072018",
-        ).grid(row=0, column=2, sticky="ew", padx=6)
+        ).grid(row=0, column=3, sticky="ew", padx=6)
         self._build_button(
             action_row,
             "Reopen",
             self._handle_reopen_task,
             bg=self.colors["teal"],
             fg="#062323",
-        ).grid(row=0, column=3, sticky="ew", padx=6)
+        ).grid(row=0, column=4, sticky="ew", padx=6)
         self._build_button(
             action_row,
             "Delete",
             self._handle_delete_task,
             bg=self.colors["danger"],
             fg="#2A0909",
-        ).grid(row=0, column=4, sticky="ew", padx=(6, 0))
+        ).grid(row=0, column=5, sticky="ew", padx=(6, 0))
 
         self.feedback_label = tk.Label(
             form_card,
@@ -326,26 +335,52 @@ class ActivityDetailView(tk.Frame):
         self.selected_notes_text.pack(fill="x", expand=False)
 
     def _build_button(self, parent, text, command, bg="#121B24", fg=None):
+        button_options = {
+            "command": command,
+            "font": ("Arial", 12, "bold"),
+            "relief": "flat",
+            "bd": 0,
+            "padx": 10,
+            "pady": 10,
+            "bg": bg,
+            "fg": fg or self.colors["text"],
+            "activebackground": bg,
+            "activeforeground": fg or self.colors["text"],
+            "highlightbackground": self.colors["border"],
+            "highlightthickness": 1,
+            "cursor": "hand2",
+        }
+
+        if isinstance(text, tk.StringVar):
+            button_options["textvariable"] = text
+        else:
+            button_options["text"] = text
+
         return tk.Button(
             parent,
-            text=text,
-            command=command,
-            font=("Arial", 12, "bold"),
-            relief="flat",
-            bd=0,
-            padx=10,
-            pady=10,
-            bg=bg,
-            fg=fg or self.colors["text"],
-            activebackground=bg,
-            activeforeground=fg or self.colors["text"],
-            highlightbackground=self.colors["border"],
-            highlightthickness=1,
-            cursor="hand2",
+            **button_options,
         )
 
-    def _handle_add_task(self):
-        self.callbacks["add"](self.get_form_data())
+    def _handle_submit_task(self):
+        task_data = self.get_form_data()
+        if self.editing_task_id is None:
+            self.callbacks["add"](task_data)
+            return
+
+        self.callbacks["update"](self.editing_task_id, task_data)
+
+    def _handle_edit_task(self):
+        task_id = self.get_selected_task_id()
+        task = self.tasks_by_id.get(task_id)
+        if task is None:
+            self.set_feedback("Select a task first.", "warning")
+            return
+
+        self._load_task_into_form(task)
+        self.set_feedback(
+            f"Editing task #{task_id}. Save changes when ready.",
+            "warning",
+        )
 
     def _handle_complete_task(self):
         task_id = self.get_selected_task_id()
@@ -388,6 +423,9 @@ class ActivityDetailView(tk.Frame):
         return str(task_id)
 
     def clear_form(self):
+        self.editing_task_id = None
+        self.submit_button_var.set("Add Task")
+        self.clear_button_var.set("Clear")
         self.title_var.set("")
         self.due_date_var.set("")
         self.due_time_var.set("")
@@ -422,6 +460,9 @@ class ActivityDetailView(tk.Frame):
     def set_tasks(self, tasks):
         selected_task_id = self.get_selected_task_id()
         self.tasks_by_id = {str(task["task_id"]): task for task in tasks}
+
+        if self.editing_task_id is not None and self.editing_task_id not in self.tasks_by_id:
+            self.clear_form()
 
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -463,3 +504,14 @@ class ActivityDetailView(tk.Frame):
             return compact_notes
 
         return f"{compact_notes[:45]}..."
+
+    def _load_task_into_form(self, task):
+        self.editing_task_id = str(task["task_id"])
+        self.submit_button_var.set("Save Changes")
+        self.clear_button_var.set("Cancel Edit")
+        self.title_var.set(task.get("title", ""))
+        self.due_date_var.set(task.get("due_date", ""))
+        self.due_time_var.set(task.get("due_time", ""))
+        self.notes_text.delete("1.0", "end")
+        self.notes_text.insert("1.0", task.get("notes", ""))
+        self.title_entry.focus_set()

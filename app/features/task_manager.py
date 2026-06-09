@@ -76,6 +76,26 @@ class TaskManager:
 
         return updated
 
+    def update_task(self, task_id, title, due_date, due_time, notes):
+        tasks = self.read_tasks()
+        updated = False
+
+        for task in tasks:
+            if task["task_id"] != str(task_id):
+                continue
+
+            task["title"] = title
+            task["due_date"] = due_date
+            task["due_time"] = due_time
+            task["notes"] = notes
+            updated = True
+            break
+
+        if updated:
+            self._write_tasks(tasks)
+
+        return updated
+
     def delete_task(self, task_id):
         tasks = self.read_tasks()
         filtered_tasks = [

@@ -7,8 +7,11 @@ VSC Hand Study Assistant is a Python desktop application that uses computer visi
 - Real-time hand tracking using MediaPipe
 - Gesture-based timer controls
 - Confirmation system using a second-hand gesture to prevent accidental actions
-- Study session tracking
-- Planned CSV database for storing completed study sessions
+- Study session tracking with CSV persistence
+- Activity task management with add, edit, complete, reopen, and delete flows
+- Embedded detail views for Pomodoro, activity monitoring, and study progress
+- Virtual mouse mode with pinch click and gesture-based scrolling
+- Dashboard cards for goals, streaks, and a live calendar summary
 - Desktop UI with camera preview and timer controls
 
 ## Tech Stack

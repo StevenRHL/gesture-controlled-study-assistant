@@ -1,4 +1,3 @@
-import calendar
 import time
 import tkinter as tk
 from datetime import datetime, timedelta
@@ -20,6 +19,7 @@ from app.features.task_manager import TaskManager
 
 from app.ui.activity_detail_window import ActivityDetailView
 from app.ui.assistive_touch_cursor import AssistiveTouchCursor
+from app.ui.calendar_controller import CalendarController
 from app.ui.pomodoro_detail_window import PomodoroDetailView
 from app.ui.sessions_window import SessionsWindow
 from app.ui.study_progress_detail_window import StudyProgressDetailView
@@ -32,8 +32,8 @@ class MainWindow:
     def __init__(self, root):
         self.root = root
         self.root.title("Study OS")
-        self.root.geometry("1480x920")
-        self.root.minsize(1320, 820)
+        self.root.geometry("1440x900")
+        self.root.minsize(1180, 760)
         self.root.configure(bg="#05070B")
 
         self.colors = {
@@ -87,10 +87,19 @@ class MainWindow:
         self.pomodoro_detail_view = None
         self.activity_detail_view = None
         self.study_progress_detail_view = None
+        self.calendar_detail_view = None
         self.pending_activity_task_selection = None
         self.update_after_id = None
+        self.dashboard_layout_after_id = None
+        self.goal_progress_width = 240
+        self.latest_goal_ratio = 0.0
+        self.goal_layout_mode = None
+        self.utility_button_columns = None
+        self.calendar_controller = CalendarController(self)
 
         self._build_ui()
+        self.root.bind("<Configure>", self._schedule_dashboard_layout_refresh)
+        self.root.after(0, self._apply_dashboard_responsive_layout)
         self.assistive_touch_cursor = AssistiveTouchCursor(self.root)
         self._refresh_dashboard_metrics(force=True)
         self._start_camera()
@@ -116,12 +125,13 @@ class MainWindow:
         self.content = tk.Frame(self.main_container, bg=self.colors["bg"])
         self.content.pack(side="left", fill="both", expand=True)
 
-        for column in range(3):
-            self.content.grid_columnconfigure(column, weight=1, uniform="content")
+        self.content.grid_columnconfigure(0, weight=12)
+        self.content.grid_columnconfigure(1, weight=7)
+        self.content.grid_columnconfigure(2, weight=11)
 
-        self.content.grid_rowconfigure(0, weight=3)
-        self.content.grid_rowconfigure(1, weight=2)
-        self.content.grid_rowconfigure(2, weight=2)
+        self.content.grid_rowconfigure(0, weight=11)
+        self.content.grid_rowconfigure(1, weight=12)
+        self.content.grid_rowconfigure(2, weight=9)
 
         self._build_sidebar()
         self._build_timer_card()
@@ -242,19 +252,22 @@ class MainWindow:
 
         timer_content = tk.Frame(self.timer_body, bg=self.colors["card"])
         timer_content.pack(fill="both", expand=True)
+        self.timer_content = timer_content
 
         dial_panel = tk.Frame(timer_content, bg=self.colors["card"])
         dial_panel.pack(side="left", fill="both", expand=True)
+        self.timer_dial_panel = dial_panel
 
         controls_panel = tk.Frame(
             timer_content,
             bg=self.colors["card_alt"],
             highlightbackground=self.colors["border"],
             highlightthickness=1,
-            padx=14,
-            pady=14
+            padx=12,
+            pady=12
         )
         controls_panel.pack(side="right", fill="y", padx=(20, 0))
+        self.timer_controls_panel = controls_panel
 
         self._build_timer_display(dial_panel)
         self._build_timer_controls_panel(controls_panel)
@@ -280,6 +293,13 @@ class MainWindow:
             widget,
             self.open_study_progress_detail,
             "open_study_progress_detail",
+        )
+
+    def _bind_calendar_detail_trigger(self, widget):
+        self._register_detail_trigger(
+            widget,
+            self.open_calendar_detail,
+            "open_calendar_detail",
         )
 
     def _register_detail_trigger(self, widget, callback, action_name):
@@ -368,6 +388,7 @@ class MainWindow:
             self.pomodoro_detail_view,
             self.activity_detail_view,
             self.study_progress_detail_view,
+            self.calendar_controller.detail_view,
         ):
             try:
                 if view is not None and view.winfo_exists() and view.winfo_ismapped():
@@ -405,55 +426,59 @@ class MainWindow:
     def _build_timer_display(self, parent):
         self.timer_canvas = tk.Canvas(
             parent,
-            width=280,
-            height=280,
+            width=220,
+            height=220,
             bg=self.colors["card"],
             highlightthickness=0
         )
         self.timer_canvas.pack(expand=True, pady=(8, 0))
 
-        self.timer_canvas.create_oval(
-            30,
-            30,
-            250,
-            250,
+        self.timer_ring = self.timer_canvas.create_oval(
+            24,
+            24,
+            196,
+            196,
             outline="#2A2118",
-            width=14
+            width=12
         )
         self.timer_arc = self.timer_canvas.create_arc(
-            30,
-            30,
-            250,
-            250,
+            24,
+            24,
+            196,
+            196,
             start=90,
             extent=0,
             style="arc",
             outline=self.colors["accent"],
-            width=14
+            width=12
         )
 
-        timer_info = tk.Frame(self.timer_canvas, bg=self.colors["card"])
-        self.timer_canvas.create_window(140, 140, window=timer_info)
+        self.timer_info = tk.Frame(self.timer_canvas, bg=self.colors["card"])
+        self.timer_info_window = self.timer_canvas.create_window(
+            110,
+            110,
+            window=self.timer_info,
+        )
 
         tk.Label(
-            timer_info,
+            self.timer_info,
             text="FOCUS SESSION",
-            font=("Arial", 12),
+            font=("Arial", 11),
             bg=self.colors["card"],
             fg=self.colors["muted"]
         ).pack(pady=(0, 8))
 
         self.timer_label = tk.Label(
-            timer_info,
+            self.timer_info,
             text=f"{self.study_timer.get_duration_minutes():02d}:00",
-            font=("Arial", 44, "bold"),
+            font=("Arial", 36, "bold"),
             bg=self.colors["card"],
             fg=self.colors["accent_bright"]
         )
         self.timer_label.pack()
 
         self.status_label = tk.Label(
-            timer_info,
+            self.timer_info,
             text="Ready",
             font=("Arial", 15),
             bg=self.colors["card"],
@@ -462,13 +487,14 @@ class MainWindow:
         self.status_label.pack(pady=(8, 4))
 
         self.timer_hint_label = tk.Label(
-            timer_info,
+            self.timer_info,
             text="Stay focused.",
             font=("Arial", 11),
             bg=self.colors["card"],
             fg=self.colors["teal"]
         )
         self.timer_hint_label.pack()
+        self._resize_timer_display(220)
 
     def _build_timer_controls_panel(self, parent):
         tk.Label(
@@ -540,7 +566,7 @@ class MainWindow:
             font=("Arial", 9),
             bg=self.colors["card_alt"],
             fg=self.colors["subtle"],
-            wraplength=260,
+            wraplength=220,
             justify="left"
         )
         self.timer_control_note.pack(anchor="w", pady=(10, 0))
@@ -621,7 +647,7 @@ class MainWindow:
 
         self.chart_canvas = tk.Canvas(
             self.activity_body,
-            height=170,
+            height=132,
             bg=self.colors["card_alt"],
             highlightbackground=self.colors["border"],
             highlightthickness=1
@@ -639,28 +665,29 @@ class MainWindow:
 
         goal_layout = tk.Frame(self.goals_body, bg=self.colors["card"])
         goal_layout.pack(fill="both", expand=True, pady=(2, 0))
+        self.goal_layout = goal_layout
 
         self.goal_canvas = tk.Canvas(
             goal_layout,
-            width=156,
-            height=156,
+            width=140,
+            height=140,
             bg=self.colors["card"],
             highlightthickness=0
         )
         self.goal_canvas.pack(side="left", padx=(0, 16), pady=(2, 0))
-        self.goal_canvas.create_oval(
-            20,
-            20,
-            136,
-            136,
+        self.goal_ring = self.goal_canvas.create_oval(
+            18,
+            18,
+            122,
+            122,
             outline=self.colors["teal_soft"],
             width=10
         )
         self.goal_arc = self.goal_canvas.create_arc(
-            20,
-            20,
-            136,
-            136,
+            18,
+            18,
+            122,
+            122,
             start=90,
             extent=0,
             style="arc",
@@ -668,11 +695,11 @@ class MainWindow:
             width=10
         )
 
-        goal_info = tk.Frame(goal_layout, bg=self.colors["card"])
-        goal_info.pack(side="left", fill="both", expand=True)
+        self.goal_info = tk.Frame(goal_layout, bg=self.colors["card"])
+        self.goal_info.pack(side="left", fill="both", expand=True)
 
         tk.Label(
-            goal_info,
+            self.goal_info,
             text="Weekly Study Goal",
             font=("Arial", 12),
             bg=self.colors["card"],
@@ -680,7 +707,7 @@ class MainWindow:
         ).pack(anchor="w")
 
         self.goal_target_label = tk.Label(
-            goal_info,
+            self.goal_info,
             text="25h 00m",
             font=("Arial", 20, "bold"),
             bg=self.colors["card"],
@@ -689,17 +716,17 @@ class MainWindow:
         self.goal_target_label.pack(anchor="w", pady=(4, 12))
 
         self.goal_progress_track = tk.Canvas(
-            goal_info,
-            width=240,
+            self.goal_info,
+            width=220,
             height=12,
             bg=self.colors["card"],
             highlightthickness=0
         )
         self.goal_progress_track.pack(anchor="w")
-        self.goal_progress_track.create_rectangle(
+        self.goal_progress_background = self.goal_progress_track.create_rectangle(
             0,
             2,
-            240,
+            220,
             10,
             fill="#1D252D",
             outline=""
@@ -714,7 +741,7 @@ class MainWindow:
         )
 
         self.goal_studied_label = tk.Label(
-            goal_info,
+            self.goal_info,
             text="Time Studied: 0h 00m",
             font=("Arial", 11),
             bg=self.colors["card"],
@@ -723,15 +750,16 @@ class MainWindow:
         self.goal_studied_label.pack(anchor="w", pady=(12, 4))
 
         self.goal_message_label = tk.Label(
-            goal_info,
+            self.goal_info,
             text="Keep going.",
             font=("Arial", 10),
             bg=self.colors["card"],
             fg=self.colors["accent_bright"],
-            wraplength=240,
+            wraplength=220,
             justify="left"
         )
         self.goal_message_label.pack(anchor="w")
+        self._resize_goal_display(140)
         self.goals_card = self.goals_body.master
         self._bind_study_progress_detail_trigger(self.goals_card)
 
@@ -745,15 +773,55 @@ class MainWindow:
         self.calendar_month_label = tk.Label(
             self.calendar_body,
             text="",
-            font=("Arial", 13, "bold"),
+            font=("Arial", 15, "bold"),
             bg=self.colors["card"],
             fg=self.colors["accent_bright"]
         )
-        self.calendar_month_label.pack(anchor="center", pady=(0, 10))
+        self.calendar_month_label.pack(anchor="w", pady=(0, 10))
 
-        self.calendar_grid = tk.Frame(self.calendar_body, bg=self.colors["card"])
+        self.calendar_hint_label = tk.Label(
+            self.calendar_body,
+            text="Today's activity schedule appears here.",
+            font=("Arial", 10),
+            bg=self.colors["card"],
+            fg=self.colors["muted"],
+            justify="left",
+            anchor="w",
+        )
+        self.calendar_hint_label.pack(fill="x", pady=(0, 12))
+
+        calendar_panel = tk.Frame(
+            self.calendar_body,
+            bg=self.colors["card_alt"],
+            highlightbackground=self.colors["border"],
+            highlightthickness=1,
+            padx=12,
+            pady=12,
+        )
+        calendar_panel.pack(fill="both", expand=True)
+
+        self.calendar_grid = tk.Frame(calendar_panel, bg=self.colors["card_alt"])
         self.calendar_grid.pack(fill="both", expand=True)
+
+        self.calendar_legend_label = tk.Label(
+            calendar_panel,
+            text="Tap the dashboard schedule to open the full month calendar.",
+            font=("Arial", 9),
+            bg=self.colors["card_alt"],
+            fg=self.colors["subtle"],
+            justify="left",
+            anchor="w",
+        )
+        self.calendar_legend_label.pack(fill="x", pady=(10, 0))
+
+        self.calendar_controller.attach_dashboard_widgets(
+            self.calendar_month_label,
+            self.calendar_hint_label,
+            self.calendar_grid,
+        )
         self._render_calendar()
+        self.calendar_card = self.calendar_body.master
+        self._bind_calendar_detail_trigger(self.calendar_card)
 
     def _build_streak_card(self):
         self.streak_body = self._create_card(
@@ -840,25 +908,24 @@ class MainWindow:
 
         utility_frame = tk.Frame(self.controls_body, bg=self.colors["card"])
         utility_frame.pack(fill="x", pady=(0, 18))
-
-        self._build_secondary_button(
+        self.utility_frame = utility_frame
+        self.save_session_button = self._build_secondary_button(
             utility_frame,
             "Save Session",
             self.save_current_session
-        ).pack(side="left", padx=(0, 10))
-
-        self._build_secondary_button(
+        )
+        self.view_sessions_button = self._build_secondary_button(
             utility_frame,
             "View Study Sessions",
             self.open_sessions_window
-        ).pack(side="left", padx=(0, 10))
+        )
 
         self.mouse_mode_button = self._build_secondary_button(
             utility_frame,
             "Mouse Mode: Off",
             self.toggle_virtual_mouse_mode
         )
-        self.mouse_mode_button.pack(side="left")
+        self._layout_utility_buttons(3)
 
         self.confirm_label = tk.Label(
             self.controls_body,
@@ -881,7 +948,7 @@ class MainWindow:
                 "right peace + left fist = reset."
             ),
             font=("Arial", 11),
-            wraplength=760,
+            wraplength=720,
             justify="left",
             bg=self.colors["card"],
             fg=self.colors["subtle"]
@@ -1016,6 +1083,213 @@ class MainWindow:
             cursor="hand2"
         )
 
+    def _schedule_dashboard_layout_refresh(self, event=None):
+        if event is not None and event.widget is not self.root:
+            return
+
+        if self.dashboard_layout_after_id is not None:
+            self.root.after_cancel(self.dashboard_layout_after_id)
+
+        self.dashboard_layout_after_id = self.root.after(
+            60,
+            self._apply_dashboard_responsive_layout,
+        )
+
+    def _apply_dashboard_responsive_layout(self):
+        self.dashboard_layout_after_id = None
+
+        if not self.main_container.winfo_ismapped():
+            return
+
+        self._resize_timer_for_dashboard()
+        self._resize_goal_for_dashboard()
+        self._layout_controls_for_dashboard()
+        self._layout_activity_for_dashboard()
+        self.calendar_controller.refresh_dashboard_layout()
+
+    def _resize_timer_for_dashboard(self):
+        card_width = max(self.timer_body.winfo_width(), 480)
+        card_height = max(self.timer_body.winfo_height(), 220)
+        available_width = max(170, (card_width // 2) - 34)
+        available_height = max(170, card_height - 44)
+        canvas_size = min(available_width, available_height, 228)
+        self._resize_timer_display(canvas_size)
+        note_width = max(180, min(260, self.timer_controls_panel.winfo_width() - 28))
+        self.timer_control_note.config(wraplength=note_width)
+
+    def _resize_timer_display(self, size):
+        inner_margin = max(18, size // 10)
+        ring_width = max(8, size // 18)
+        center = size // 2
+        label_size = max(28, size // 6)
+        meta_size = max(10, size // 20)
+        status_size = max(11, size // 16)
+        hint_size = max(9, size // 24)
+
+        self.timer_canvas.config(width=size, height=size)
+        self.timer_canvas.coords(
+            self.timer_ring,
+            inner_margin,
+            inner_margin,
+            size - inner_margin,
+            size - inner_margin,
+        )
+        self.timer_canvas.coords(
+            self.timer_arc,
+            inner_margin,
+            inner_margin,
+            size - inner_margin,
+            size - inner_margin,
+        )
+        self.timer_canvas.itemconfig(self.timer_ring, width=ring_width)
+        self.timer_canvas.itemconfig(self.timer_arc, width=ring_width)
+        self.timer_canvas.coords(self.timer_info_window, center, center)
+        self.timer_label.config(font=("Arial", label_size, "bold"))
+        self.status_label.config(font=("Arial", status_size))
+        self.timer_hint_label.config(font=("Arial", hint_size))
+
+        for child in self.timer_info.winfo_children():
+            if child not in (self.timer_label, self.status_label, self.timer_hint_label):
+                child.config(font=("Arial", meta_size))
+
+    def _resize_goal_for_dashboard(self):
+        card_width = max(self.goals_body.winfo_width(), 280)
+        card_height = max(self.goals_body.winfo_height(), 220)
+        stacked_layout = card_width < 420
+        layout_mode = "stacked" if stacked_layout else "side"
+
+        if self.goal_layout_mode != layout_mode:
+            self.goal_canvas.pack_forget()
+            self.goal_info.pack_forget()
+            if stacked_layout:
+                self.goal_canvas.pack(anchor="center", pady=(4, 14))
+                self.goal_info.pack(fill="both", expand=True)
+            else:
+                self.goal_canvas.pack(side="left", padx=(0, 16), pady=(2, 0))
+                self.goal_info.pack(side="left", fill="both", expand=True)
+            self.goal_layout_mode = layout_mode
+
+        canvas_size = min(max(112, card_height // 3), 148)
+        if stacked_layout:
+            canvas_size = min(canvas_size, 132)
+        self._resize_goal_display(canvas_size)
+
+        info_width = max(180, self.goal_info.winfo_width())
+        self.goal_progress_width = max(150, min(240, info_width - 24))
+        self.goal_progress_track.config(width=self.goal_progress_width)
+        self.goal_progress_track.coords(
+            self.goal_progress_background,
+            0,
+            2,
+            self.goal_progress_width,
+            10,
+        )
+        self.goal_progress_track.coords(
+            self.goal_progress_fill,
+            0,
+            2,
+            int(self.goal_progress_width * self.latest_goal_ratio),
+            10,
+        )
+        self.goal_message_label.config(wraplength=max(170, info_width - 8))
+
+    def _resize_goal_display(self, size):
+        inner_margin = max(16, size // 8)
+        ring_width = max(8, size // 15)
+        center = size // 2
+        percent_y = center - max(8, size // 18)
+        label_y = center + max(12, size // 14)
+        percent_font = max(18, size // 6)
+        label_font = max(8, size // 18)
+
+        self.goal_canvas.config(width=size, height=size)
+        self.goal_canvas.coords(
+            self.goal_ring,
+            inner_margin,
+            inner_margin,
+            size - inner_margin,
+            size - inner_margin,
+        )
+        self.goal_canvas.coords(
+            self.goal_arc,
+            inner_margin,
+            inner_margin,
+            size - inner_margin,
+            size - inner_margin,
+        )
+        self.goal_canvas.itemconfig(self.goal_ring, width=ring_width)
+        self.goal_canvas.itemconfig(self.goal_arc, width=ring_width)
+        self.goal_canvas.delete("goal_text")
+        self.goal_canvas.create_text(
+            center,
+            percent_y,
+            text=f"{int(self.latest_goal_ratio * 100)}%",
+            tags="goal_text",
+            fill=self.colors["accent_bright"],
+            font=("Arial", percent_font, "bold")
+        )
+        self.goal_canvas.create_text(
+            center,
+            label_y,
+            text="WEEKLY GOAL",
+            tags="goal_text",
+            fill=self.colors["muted"],
+            font=("Arial", label_font, "bold")
+        )
+
+    def _layout_controls_for_dashboard(self):
+        controls_width = max(self.controls_body.winfo_width(), 320)
+        if controls_width < 520:
+            button_columns = 1
+        elif controls_width < 760:
+            button_columns = 2
+        else:
+            button_columns = 3
+
+        self._layout_utility_buttons(button_columns)
+        self.help_label.config(wraplength=max(280, controls_width - 28))
+
+    def _layout_utility_buttons(self, columns):
+        if self.utility_button_columns == columns:
+            return
+
+        self.utility_button_columns = columns
+        buttons = [
+            self.save_session_button,
+            self.view_sessions_button,
+            self.mouse_mode_button,
+        ]
+        for index in range(3):
+            self.utility_frame.grid_columnconfigure(index, weight=0)
+        for button in buttons:
+            button.grid_forget()
+
+        for index in range(columns):
+            self.utility_frame.grid_columnconfigure(index, weight=1, uniform="utility")
+
+        for index, button in enumerate(buttons):
+            row = index // columns
+            column = index % columns
+            button.grid(
+                row=row,
+                column=column,
+                sticky="ew",
+                padx=(0, 10 if column < columns - 1 else 0),
+                pady=(0, 10 if row == 0 and len(buttons) > columns else 0),
+            )
+
+    def _layout_activity_for_dashboard(self):
+        card_width = max(self.activity_body.winfo_width(), 280)
+        card_height = max(self.activity_body.winfo_height(), 220)
+        summary_width = max(200, card_width - 20)
+        chart_height = 100 if card_height < 280 else 124
+
+        self.activity_summary_label.config(wraplength=summary_width)
+        self.activity_preview_title.config(wraplength=summary_width - 24)
+        for label in self.activity_preview_labels:
+            label.config(wraplength=summary_width - 24)
+        self.chart_canvas.config(height=chart_height)
+
     def _build_timer_control_button(
         self,
         parent,
@@ -1047,49 +1321,19 @@ class MainWindow:
             cursor="hand2"
         )
 
-    def _render_calendar(self):
-        for child in self.calendar_grid.winfo_children():
-            child.destroy()
-
-        today = datetime.now()
-        year = today.year
-        month = today.month
-        self.calendar_month_label.config(text=today.strftime("%B %Y"))
-
-        weekdays = ["S", "M", "T", "W", "T", "F", "S"]
-        for index, label in enumerate(weekdays):
-            tk.Label(
-                self.calendar_grid,
-                text=label,
-                width=3,
-                font=("Arial", 10, "bold"),
-                bg=self.colors["card"],
-                fg=self.colors["muted"]
-            ).grid(row=0, column=index, padx=4, pady=4)
-
-        for row_index, week in enumerate(calendar.monthcalendar(year, month), start=1):
-            for column_index, day in enumerate(week):
-                if day == 0:
-                    cell_text = ""
-                    bg = self.colors["card"]
-                    fg = self.colors["subtle"]
-                else:
-                    cell_text = str(day)
-                    if day == today.day:
-                        bg = self.colors["accent"]
-                        fg = "#1A1208"
-                    else:
-                        bg = self.colors["card"]
-                        fg = self.colors["text"]
-
-                tk.Label(
-                    self.calendar_grid,
-                    text=cell_text,
-                    width=3,
-                    font=("Arial", 10),
-                    bg=bg,
-                    fg=fg
-                ).grid(row=row_index, column=column_index, padx=4, pady=4)
+    def _render_calendar(
+        self,
+        study_dates=None,
+        due_dates=None,
+        overdue_dates=None,
+        tasks_by_date=None,
+    ):
+        self.calendar_controller.render_dashboard_calendar(
+            study_dates=study_dates,
+            due_dates=due_dates,
+            overdue_dates=overdue_dates,
+            tasks_by_date=tasks_by_date,
+        )
 
     def _start_camera(self):
         try:
@@ -1340,6 +1584,7 @@ class MainWindow:
             self.pomodoro_detail_view,
             self.activity_detail_view,
             self.study_progress_detail_view,
+            self.calendar_controller.detail_view,
         ):
             if view is not None and view is not active_view:
                 view.pack_forget()
@@ -1380,6 +1625,7 @@ class MainWindow:
     def open_activity_detail(self, task_id=None):
         callbacks = {
             "add": self.add_activity_task,
+            "update": self.update_activity_task,
             "complete": lambda task_id: self.update_activity_task_status(task_id, "completed"),
             "reopen": lambda task_id: self.update_activity_task_status(task_id, "pending"),
             "delete": self.delete_activity_task,
@@ -1432,37 +1678,57 @@ class MainWindow:
         if self.activity_detail_view is None:
             return
 
-        title = task_data["title"].strip()
-        due_date = task_data["due_date"].strip()
-        due_time = task_data["due_time"].strip()
-        notes = task_data["notes"].strip()
-
-        if not title:
-            self.activity_detail_view.set_feedback(
-                "Enter a task title before saving.",
-                "danger",
-            )
-            return
-
-        try:
-            datetime.strptime(due_date, "%Y-%m-%d")
-            datetime.strptime(due_time, "%H:%M")
-        except ValueError:
-            self.activity_detail_view.set_feedback(
-                "Use YYYY-MM-DD for date and HH:MM for time.",
-                "danger",
-            )
+        normalized_task = self._normalize_activity_task_data(task_data)
+        if normalized_task is None:
             return
 
         self.task_manager.add_task(
-            title=title,
-            due_date=due_date,
-            due_time=due_time,
-            notes=notes,
+            title=normalized_task["title"],
+            due_date=normalized_task["due_date"],
+            due_time=normalized_task["due_time"],
+            notes=normalized_task["notes"],
         )
         self.activity_detail_view.clear_form()
         self.activity_detail_view.set_feedback(
             "Task saved to the activity monitor.",
+            "success",
+        )
+        self._sync_activity_detail_window()
+        self._refresh_dashboard_metrics(force=True)
+
+    def update_activity_task(self, task_id, task_data):
+        if self.activity_detail_view is None:
+            return
+
+        if task_id is None:
+            self.activity_detail_view.set_feedback(
+                "Select a task first.",
+                "warning",
+            )
+            return
+
+        normalized_task = self._normalize_activity_task_data(task_data)
+        if normalized_task is None:
+            return
+
+        updated = self.task_manager.update_task(
+            task_id=task_id,
+            title=normalized_task["title"],
+            due_date=normalized_task["due_date"],
+            due_time=normalized_task["due_time"],
+            notes=normalized_task["notes"],
+        )
+        if not updated:
+            self.activity_detail_view.set_feedback(
+                "The selected task could not be updated.",
+                "danger",
+            )
+            return
+
+        self.pending_activity_task_selection = str(task_id)
+        self.activity_detail_view.clear_form()
+        self.activity_detail_view.set_feedback(
+            "Task details updated.",
             "success",
         )
         self._sync_activity_detail_window()
@@ -1538,6 +1804,36 @@ class MainWindow:
             self._calculate_metrics(),
             self._format_minutes,
         )
+
+    def _normalize_activity_task_data(self, task_data):
+        title = task_data["title"].strip()
+        due_date = task_data["due_date"].strip()
+        due_time = task_data["due_time"].strip()
+        notes = task_data["notes"].strip()
+
+        if not title:
+            self.activity_detail_view.set_feedback(
+                "Enter a task title before saving.",
+                "danger",
+            )
+            return None
+
+        try:
+            datetime.strptime(due_date, "%Y-%m-%d")
+            datetime.strptime(due_time, "%H:%M")
+        except ValueError:
+            self.activity_detail_view.set_feedback(
+                "Use YYYY-MM-DD for date and HH:MM for time.",
+                "danger",
+            )
+            return None
+
+        return {
+            "title": title,
+            "due_date": due_date,
+            "due_time": due_time,
+            "notes": notes,
+        }
 
     def _sync_pomodoro_detail_window(self):
         if self.pomodoro_detail_view is None:
@@ -1644,6 +1940,15 @@ class MainWindow:
                         f"card=goals screen=({screen_x},{screen_y})"
                     )
                 self.open_study_progress_detail()
+                return
+
+            if self._point_in_widget(self.calendar_card, screen_x, screen_y):
+                if DEBUG_HITBOX_CLICKS:
+                    print(
+                        f"[virtual-hitbox] action=open_calendar_detail "
+                        f"card=calendar screen=({screen_x},{screen_y})"
+                    )
+                self.open_calendar_detail()
                 return
 
         active_detail_view = self._get_active_detail_view()
@@ -1763,6 +2068,10 @@ class MainWindow:
         self.last_metrics_refresh = current_time
         metrics = self._calculate_metrics()
         task_metrics = self._calculate_task_metrics()
+        self.calendar_controller.update_dashboard(
+            study_dates=metrics["calendar_session_dates"],
+            task_metrics=task_metrics,
+        )
 
         self.pending_tasks_value.config(text=str(task_metrics["pending_tasks"]))
         self.completed_tasks_value.config(text=str(task_metrics["completed_tasks"]))
@@ -1783,29 +2092,14 @@ class MainWindow:
         self.goal_message_label.config(text=metrics["goal_message"])
 
         goal_ratio = min(metrics["weekly_minutes"] / metrics["goal_minutes"], 1.0)
+        self.latest_goal_ratio = goal_ratio
         self.goal_canvas.itemconfig(self.goal_arc, extent=-goal_ratio * 360)
-        self.goal_canvas.delete("goal_text")
-        self.goal_canvas.create_text(
-            78,
-            68,
-            text=f"{int(goal_ratio * 100)}%",
-            tags="goal_text",
-            fill=self.colors["accent_bright"],
-            font=("Arial", 20, "bold")
-        )
-        self.goal_canvas.create_text(
-            78,
-            92,
-            text="WEEKLY GOAL",
-            tags="goal_text",
-            fill=self.colors["muted"],
-            font=("Arial", 9, "bold")
-        )
+        self._resize_goal_display(self.goal_canvas.winfo_width() or 140)
         self.goal_progress_track.coords(
             self.goal_progress_fill,
             0,
             2,
-            int(240 * goal_ratio),
+            int(self.goal_progress_width * goal_ratio),
             10
         )
         self._sync_study_progress_detail_window()
@@ -1813,6 +2107,8 @@ class MainWindow:
     def _calculate_metrics(self):
         sessions = self.session_logger.read_sessions()
         today = datetime.now().date()
+        year = today.year
+        month = today.month
         start_date = today - timedelta(days=6)
 
         dates_in_range = [start_date + timedelta(days=index) for index in range(7)]
@@ -1895,12 +2191,19 @@ class MainWindow:
             "day_sessions": [sessions_by_day[day] for day in dates_in_range],
             "days_with_sessions": days_with_sessions,
             "recent_sessions": recent_sessions,
+            "calendar_session_dates": {
+                session_date
+                for session_date in set(session_dates)
+                if session_date.year == year and session_date.month == month
+            },
             "total_sessions": len(sessions),
         }
 
     def _calculate_task_metrics(self):
         tasks = self.task_manager.read_tasks()
         today = datetime.now().date()
+        year = today.year
+        month = today.month
         start_date = today - timedelta(days=6)
         dates_in_range = [start_date + timedelta(days=index) for index in range(7)]
         created_by_day = {day: 0 for day in dates_in_range}
@@ -1911,6 +2214,21 @@ class MainWindow:
         due_today = 0
         overdue_tasks = 0
         next_due_text = None
+        calendar_tasks_by_date, calendar_month_tasks = self.calendar_controller.build_task_index(
+            tasks,
+            year,
+            month,
+        )
+        calendar_due_dates = {
+            due_date
+            for due_date, day_tasks in calendar_tasks_by_date.items()
+            if any(task["status"] != "completed" for task in day_tasks)
+        }
+        calendar_overdue_dates = {
+            due_date
+            for due_date, day_tasks in calendar_tasks_by_date.items()
+            if due_date < today and any(task["status"] != "completed" for task in day_tasks)
+        }
 
         for task in tasks:
             created_at = self._parse_iso_datetime(task.get("created_at", ""))
@@ -1962,10 +2280,15 @@ class MainWindow:
             "pending_tasks": pending_tasks,
             "completed_tasks": completed_tasks,
             "due_today": due_today,
+            "overdue_tasks": overdue_tasks,
             "summary": summary,
             "labels": labels,
             "created_counts": created_counts,
             "completed_counts": completed_counts,
+            "calendar_tasks_by_date": calendar_tasks_by_date,
+            "calendar_month_tasks": calendar_month_tasks,
+            "calendar_due_dates": calendar_due_dates,
+            "calendar_overdue_dates": calendar_overdue_dates,
             "preview_tasks": preview_tasks,
         }
 
@@ -2026,8 +2349,8 @@ class MainWindow:
     def _draw_activity_chart(self, labels, created_counts, completed_counts):
         self.chart_canvas.delete("all")
 
-        width = max(self.chart_canvas.winfo_width(), 420)
-        height = max(self.chart_canvas.winfo_height(), 220)
+        width = max(self.chart_canvas.winfo_width(), 320)
+        height = max(self.chart_canvas.winfo_height(), 120)
         left = 44
         top = 20
         right = width - 18
@@ -2168,6 +2491,9 @@ class MainWindow:
                 label.configure(cursor="hand2")
             except tk.TclError:
                 pass
+
+    def open_calendar_detail(self, selected_date=None):
+        self.calendar_controller.open_detail(selected_date)
 
     def _format_minutes(self, minutes):
         total_minutes = int(round(minutes))
